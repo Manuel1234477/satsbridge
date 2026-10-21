@@ -73,6 +73,16 @@ struct Details {
     fee: i64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct WalletInfo {
+    pub name: String,
+    /// Millisats.
+    pub balance: i64,
+    /// Only returned for an admin key.
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
 enum Outcome {
     Paid { preimage: Option<String>, fee_msat: i64 },
     Pending,
@@ -106,6 +116,39 @@ impl LnbitsAdapter {
         self.pay_poll_attempts = attempts;
         self.pay_poll_interval = interval;
         self
+    }
+
+    /// Confirms the configured keys work (and that the admin key really is one).
+    /// Returns the wallet behind the invoice key.
+    pub async fn verify_credentials(&self) -> Result<WalletInfo, AdapterError> {
+        let wallet = self.wallet(&self.config.invoice_key, "LNBITS_INVOICE_KEY").await?;
+        if let Some(admin_key) = &self.config.admin_key {
+            let admin = self.wallet(admin_key, "LNBITS_ADMIN_KEY").await?;
+            if admin.id.is_none() {
+                return Err(AdapterError::Rejected("LNBITS_ADMIN_KEY is not an admin key".into()));
+            }
+        }
+        Ok(wallet)
+    }
+
+    async fn wallet(&self, key: &str, label: &str) -> Result<WalletInfo, AdapterError> {
+        let res = self
+            .http
+            .get(self.url("/api/v1/wallet"))
+            .header("X-API-KEY", key)
+            .send()
+            .await
+            .map_err(unavailable)?;
+        let status = res.status();
+        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND {
+            return Err(AdapterError::Rejected(format!(
+                "LNbits rejected {label} (HTTP {status})"
+            )));
+        }
+        if !status.is_success() {
+            return Err(unavailable(format!("wallet lookup HTTP {status}")));
+        }
+        res.json().await.map_err(unavailable)
     }
 
     fn url(&self, path: &str) -> String {
@@ -170,12 +213,24 @@ impl LightningAdapter for LnbitsAdapter {
     }
 
     async fn create_invoice(&self, amount_sats: i64, memo: &str, expiry_secs: i64) -> Result<Invoice, AdapterError> {
-        let mut body =
-            json!({ "out": false, "amount": amount_sats, "unit": "sat", "memo": memo, "expiry": expiry_secs });
-        if let Some(webhook) = &self.config.webhook_url {
-            body["webhook"] = json!(webhook);
+        let body = json!({ "out": false, "amount": amount_sats, "unit": "sat", "memo": memo, "expiry": expiry_secs });
+        let (mut status, mut bytes) = match &self.config.webhook_url {
+            Some(webhook) => {
+                let mut with_hook = body.clone();
+                with_hook["webhook"] = json!(webhook);
+                self.post_payment(&self.config.invoice_key, with_hook).await?
+            }
+            None => self.post_payment(&self.config.invoice_key, body.clone()).await?,
+        };
+        // LNbits refuses webhook URLs outside its callback rules (by default: domain names only).
+        // The settlement watcher still confirms payment, so don't let that block invoices.
+        if self.config.webhook_url.is_some()
+            && status == StatusCode::BAD_REQUEST
+            && detail(&bytes).contains("Callback URL")
+        {
+            tracing::warn!(reason = %detail(&bytes), "LNbits rejected LNBITS_WEBHOOK_URL; creating invoice without it");
+            (status, bytes) = self.post_payment(&self.config.invoice_key, body).await?;
         }
-        let (status, bytes) = self.post_payment(&self.config.invoice_key, body).await?;
         if !status.is_success() {
             let message = format!("LNbits invoice creation failed (HTTP {status}): {}", detail(&bytes));
             return Err(if status.is_server_error() {
@@ -202,12 +257,7 @@ impl LightningAdapter for LnbitsAdapter {
             .admin_key
             .as_deref()
             .ok_or_else(|| AdapterError::Rejected("LNBITS_ADMIN_KEY is required to send payments".into()))?;
-        let payment_hash = payment_request
-            .trim()
-            .parse::<lightning_invoice::Bolt11Invoice>()
-            .map_err(|_| AdapterError::Rejected("not a valid BOLT11 invoice".into()))?
-            .payment_hash()
-            .to_string();
+        let payment_hash = super::decode_invoice(payment_request)?.payment_hash;
 
         // LNbits has no per-payment fee cap; it reserves fees per its own settings.
         let mut failure = None;
@@ -437,6 +487,13 @@ mod tests {
             InvoiceStatus::Paid { amount_sats: 1_000 }
         );
         assert_eq!(ln.invoice_status(&"0".repeat(64)).await.unwrap(), InvoiceStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn falls_back_when_lnbits_rejects_the_webhook_url() {
+        let mut ln = lnbits(None).await;
+        ln.config.webhook_url = Some("http://127.0.0.1:8080/api/v1/webhooks/lnbits".into());
+        assert!(ln.create_invoice(1_000, "test", 600).await.is_ok());
     }
 
     #[tokio::test]

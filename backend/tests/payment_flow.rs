@@ -1,4 +1,6 @@
-//! End-to-end flow against the real router with mock adapters (PRD §17-18, NGN addendum A.9).
+//! End-to-end flows through the real router (PRD §17-18, NGN addendum A.9). Lightning is a
+//! test-only node (`TestNode`); settlement always goes through the production paths: the LNbits
+//! webhook (which re-checks with the node) or the settlement watcher.
 
 use std::sync::Arc;
 
@@ -13,7 +15,7 @@ use satsbridge::{
     adapters::{
         AdapterError,
         fx::StaticFxProvider,
-        lightning::{Invoice, InvoiceStatus, LightningAdapter, MockLightningAdapter, PaymentSent},
+        lightning::{Invoice, InvoiceStatus, LightningAdapter, PaymentSent, lnbits::LnbitsConfig},
         payout::{
             PayoutRegistry,
             bitnob::BitnobConfig,
@@ -31,7 +33,6 @@ use satsbridge::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-const LN_SECRET: &str = "test-ln-secret";
 const PROVIDER_SECRET: &str = "test-provider-secret";
 const TEST_PRICES: &str = "XOF=60000000,XAF=60000000,GNF=860000000,KES=12900000,NGN=150000000";
 
@@ -39,6 +40,7 @@ struct TestApp {
     router: Router,
     state: AppState,
     ngn: Arc<MockNgnAdapter>,
+    node: Arc<TestNode>,
 }
 
 async fn app_with(quote_ttl_secs: i64) -> TestApp {
@@ -47,14 +49,13 @@ async fn app_with(quote_ttl_secs: i64) -> TestApp {
 
 async fn build(
     quote_ttl_secs: i64,
-    customize: impl FnOnce(&mut Config, &mut PayoutRegistry, &mut Arc<dyn LightningAdapter>),
+    customize: impl FnOnce(&mut Config, &mut PayoutRegistry, &Arc<TestNode>),
 ) -> TestApp {
     let db_path = std::env::temp_dir().join(format!("satsbridge-test-{}.db", uuid::Uuid::new_v4()));
     let config = Config {
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         database_url: format!("sqlite://{}", db_path.display()),
         api_key: None,
-        lightning_webhook_secret: LN_SECRET.into(),
         provider_webhook_secret: PROVIDER_SECRET.into(),
         quote_ttl_secs,
         invoice_expiry_secs: 600,
@@ -64,7 +65,16 @@ async fn build(
         // Round test prices: 1 XOF = 2.5 NGN before fees.
         fx: FxConfig::static_only(parse_prices(TEST_PRICES).unwrap()),
         payouts: PayoutConfig::mock(50_000_000),
-        lightning: LightningConfig::mock(),
+        // Unused: tests inject `TestNode` directly.
+        lightning: LightningConfig {
+            lnbits: LnbitsConfig {
+                base_url: "http://127.0.0.1:9".into(),
+                invoice_key: "unused".into(),
+                admin_key: None,
+                webhook_url: None,
+            },
+            poll_secs: 0,
+        },
         dev_routes: true,
     };
     let mut config = config;
@@ -72,12 +82,12 @@ async fn build(
     let mut payouts = PayoutRegistry::default();
     payouts.register(Arc::new(MockTandoAdapter));
     payouts.register(ngn.clone());
-    let mut lightning: Arc<dyn LightningAdapter> = Arc::new(MockLightningAdapter);
-    customize(&mut config, &mut payouts, &mut lightning);
+    let node = Arc::new(TestNode::default());
+    customize(&mut config, &mut payouts, &node);
     let state = AppState {
         pool: connect(&config.database_url).await.unwrap(),
         fx: Arc::new(StaticFxProvider::new(config.fx.static_prices.clone())),
-        lightning,
+        lightning: node.clone(),
         payouts: Arc::new(payouts),
         config: Arc::new(config),
     };
@@ -85,6 +95,7 @@ async fn build(
         router: router(state.clone()),
         state,
         ngn,
+        node,
     }
 }
 
@@ -171,6 +182,27 @@ impl TestApp {
         (id, invoice)
     }
 
+    /// The sender pays: the node now reports the invoice paid, and LNbits fires its webhook.
+    async fn pay_and_notify(&self, payment_hash: &Value) -> Value {
+        let hash = payment_hash.as_str().unwrap();
+        self.node.mark_paid(hash);
+        self.lnbits_webhook(hash).await
+    }
+
+    /// LNbits posts the payment as a JSON-encoded string.
+    async fn lnbits_webhook(&self, payment_hash: &str) -> Value {
+        let body = json!(json!({ "payment_hash": payment_hash, "amount": 1 }).to_string());
+        let (status, body) = self.call(Method::POST, "/api/v1/webhooks/lnbits", Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    }
+
+    async fn invoice_for(&self, payment_id: &str) -> Value {
+        self.call(Method::POST, &format!("/api/v1/payments/{payment_id}/pay"), None)
+            .await
+            .1
+    }
+
     async fn status_of(&self, id: &str) -> Value {
         self.call(Method::GET, &format!("/api/v1/payments/{id}"), None).await.1
     }
@@ -182,26 +214,28 @@ async fn xof_to_ngn_completes_with_exactly_one_payout() {
     let (id, invoice) = app.ngn_payment_awaiting_invoice().await;
     assert!(invoice["payment_request"].as_str().unwrap().starts_with("lnbcrt"));
 
+    // A webhook for an invoice the node hasn't seen paid changes nothing.
+    let hash = invoice["payment_hash"].as_str().unwrap();
+    assert_eq!(app.lnbits_webhook(hash).await["outcome"], "ignored");
+    assert_eq!(app.status_of(&id).await["status"], "AWAITING_PAYMENT");
+
     // Requesting the invoice again returns the same one.
     let (_, again) = app
         .call(Method::POST, &format!("/api/v1/payments/{id}/pay"), None)
         .await;
     assert_eq!(again["payment_hash"], invoice["payment_hash"]);
 
-    let settle =
-        json!({ "event_id": "ln-1", "payment_hash": invoice["payment_hash"], "amount_sats": invoice["amount_sats"] });
-    let (status, body) = app
-        .webhook("/api/v1/webhooks/lightning", LN_SECRET, settle.clone())
-        .await;
-    assert_eq!((status, body["outcome"].as_str()), (StatusCode::OK, Some("processed")));
+    assert_eq!(
+        app.pay_and_notify(&invoice["payment_hash"]).await["outcome"],
+        "processed"
+    );
 
-    // Replayed event, and a different event for the same invoice: neither pays out again.
-    let (_, body) = app.webhook("/api/v1/webhooks/lightning", LN_SECRET, settle).await;
-    assert_eq!(body["outcome"], "duplicate");
-    let other =
-        json!({ "event_id": "ln-2", "payment_hash": invoice["payment_hash"], "amount_sats": invoice["amount_sats"] });
-    let (_, body) = app.webhook("/api/v1/webhooks/lightning", LN_SECRET, other).await;
-    assert_eq!(body["outcome"], "ignored");
+    // Replayed webhook and a watcher pass: neither pays out again.
+    assert_eq!(app.lnbits_webhook(hash).await["outcome"], "duplicate");
+    assert_eq!(
+        satsbridge::services::settlement::poll_once(&app.state).await.unwrap(),
+        0
+    );
     assert_eq!(app.ngn.submissions(), 1);
 
     let details = app.status_of(&id).await;
@@ -244,7 +278,7 @@ async fn xof_to_ngn_completes_with_exactly_one_payout() {
 }
 
 #[tokio::test]
-async fn dev_routes_drive_a_kes_payout() {
+async fn kes_payout_via_mock_provider_callback() {
     let app = app_with(120).await;
     let (_, quote) = app
         .call(
@@ -262,10 +296,8 @@ async fn dev_routes_drive_a_kes_payout() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{payment}");
     let id = payment["id"].as_str().unwrap();
-    app.call(Method::POST, &format!("/api/v1/payments/{id}/pay"), None)
-        .await;
-    app.call(Method::POST, &format!("/api/v1/dev/payments/{id}/settle"), None)
-        .await;
+    let invoice = app.invoice_for(id).await;
+    app.pay_and_notify(&invoice["payment_hash"]).await;
     app.call(
         Method::POST,
         &format!("/api/v1/dev/payments/{id}/payout"),
@@ -278,11 +310,19 @@ async fn dev_routes_drive_a_kes_payout() {
 #[tokio::test]
 async fn rejects_bad_signatures_and_bad_recipients() {
     let app = app_with(120).await;
-    let req = Request::post("/api/v1/webhooks/lightning")
+    let req = Request::post("/api/v1/webhooks/provider")
         .header(SIGNATURE_HEADER, "deadbeef")
         .body(Body::from("{}"))
         .unwrap();
     assert_eq!(app.send(req).await.0, StatusCode::UNAUTHORIZED);
+
+    // There is no endpoint that settles a payment on the caller's word.
+    let (status, _) = app
+        .call(Method::POST, "/api/v1/webhooks/lightning", Some(json!({})))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = app.call(Method::POST, "/api/v1/dev/payments/x/settle", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     let (status, body) = app
         .call(
@@ -414,10 +454,10 @@ mod lnurl {
 async fn tapnob_lightning_address_payout_completes_on_payment() {
     let domain = lnurl::serve().await;
     let allowed = domain.clone();
-    let app = build(120, move |_, payouts, _| {
+    let app = build(120, move |_, payouts, node| {
         payouts.register(Arc::new(LightningAddressAdapter::new(
             reqwest::Client::new(),
-            Arc::new(MockLightningAdapter),
+            node.clone(),
             LightningAddressConfig {
                 provider: "tapnob",
                 display_name: "Tapnob",
@@ -459,16 +499,25 @@ async fn tapnob_lightning_address_payout_completes_on_payment() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{payment}");
     let id = payment["id"].as_str().unwrap();
-    app.call(Method::POST, &format!("/api/v1/payments/{id}/pay"), None)
-        .await;
-    app.call(Method::POST, &format!("/api/v1/dev/payments/{id}/settle"), None)
-        .await;
+    let invoice = app.invoice_for(id).await;
+    app.pay_and_notify(&invoice["payment_hash"]).await;
 
     let details = app.status_of(id).await;
     assert_eq!(details["status"], "COMPLETED", "{details}");
     assert_eq!(details["payout"]["provider"], "tapnob");
     assert_eq!(details["payout"]["status"], "completed");
     assert_eq!(app.ngn.submissions(), 0);
+    assert_eq!(app.node.sent(), 1);
+
+    // Real providers can't be "completed" through the dev simulator.
+    let (status, _) = app
+        .call(
+            Method::POST,
+            &format!("/api/v1/dev/payments/{id}/payout"),
+            Some(json!({ "status": "success" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
 }
 
 #[tokio::test]
@@ -489,9 +538,7 @@ async fn bitnob_webhooks_are_verified_and_mapped() {
     })
     .await;
     let (id, invoice) = app.ngn_payment_awaiting_invoice().await;
-    let settle =
-        json!({ "event_id": "ln-1", "payment_hash": invoice["payment_hash"], "amount_sats": invoice["amount_sats"] });
-    app.webhook("/api/v1/webhooks/lightning", LN_SECRET, settle).await;
+    app.pay_and_notify(&invoice["payment_hash"]).await;
     let reference = app.status_of(&id).await["payout"]["provider_reference"]
         .as_str()
         .unwrap()
@@ -532,36 +579,78 @@ async fn bitnob_webhooks_are_verified_and_mapped() {
     assert_eq!(app.status_of(&id).await["status"], "COMPLETED");
 }
 
-/// Node that reports every invoice it issued as paid in full.
+/// Test-only Lightning node. Issues real (regtest) BOLT11 invoices; an invoice is paid once
+/// the test calls `mark_paid`, as if the sender had paid it.
 #[derive(Default)]
-struct PaidNode {
-    issued: std::sync::Mutex<std::collections::HashMap<String, i64>>,
+struct TestNode {
+    issued: std::sync::Mutex<std::collections::HashMap<String, (i64, bool)>>,
+    sent: std::sync::atomic::AtomicUsize,
 }
 
-#[async_trait::async_trait]
-impl LightningAdapter for PaidNode {
-    fn name(&self) -> &'static str {
-        "paid-node"
-    }
-
-    async fn create_invoice(&self, amount_sats: i64, memo: &str, expiry_secs: i64) -> Result<Invoice, AdapterError> {
-        let invoice = MockLightningAdapter
-            .create_invoice(amount_sats, memo, expiry_secs)
-            .await?;
+impl TestNode {
+    fn mark_paid(&self, payment_hash: &str) {
         self.issued
             .lock()
             .unwrap()
-            .insert(invoice.payment_hash.clone(), amount_sats);
-        Ok(invoice)
+            .get_mut(payment_hash)
+            .expect("unknown invoice")
+            .1 = true;
     }
 
-    async fn pay_invoice(&self, pr: &str, max_fee_sats: i64) -> Result<PaymentSent, AdapterError> {
-        MockLightningAdapter.pay_invoice(pr, max_fee_sats).await
+    fn sent(&self) -> usize {
+        self.sent.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl LightningAdapter for TestNode {
+    fn name(&self) -> &'static str {
+        "test-node"
+    }
+
+    async fn create_invoice(&self, amount_sats: i64, memo: &str, expiry_secs: i64) -> Result<Invoice, AdapterError> {
+        use bitcoin::{
+            hashes::{Hash, sha256},
+            secp256k1::{Secp256k1, SecretKey},
+        };
+        let preimage = uuid::Uuid::new_v4();
+        let hash = sha256::Hash::hash(preimage.as_bytes());
+        let key = SecretKey::from_slice(&[5; 32]).unwrap();
+        let payment_request = lightning_invoice::InvoiceBuilder::new(lightning_invoice::Currency::Regtest)
+            .description(memo.into())
+            .payment_hash(hash)
+            .payment_secret(lightning_invoice::PaymentSecret([6; 32]))
+            .current_timestamp()
+            .min_final_cltv_expiry_delta(144)
+            .amount_milli_satoshis(amount_sats as u64 * 1000)
+            .build_signed(|m| Secp256k1::new().sign_ecdsa_recoverable(m, &key))
+            .unwrap()
+            .to_string();
+        self.issued
+            .lock()
+            .unwrap()
+            .insert(hash.to_string(), (amount_sats, false));
+        Ok(Invoice {
+            payment_request,
+            payment_hash: hash.to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::seconds(expiry_secs),
+        })
+    }
+
+    async fn pay_invoice(&self, pr: &str, _max_fee_sats: i64) -> Result<PaymentSent, AdapterError> {
+        self.sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let invoice: lightning_invoice::Bolt11Invoice = pr.parse().unwrap();
+        Ok(PaymentSent {
+            payment_hash: invoice.payment_hash().to_string(),
+            preimage: String::new(),
+            fee_sats: 0,
+        })
     }
 
     async fn invoice_status(&self, payment_hash: &str) -> Result<InvoiceStatus, AdapterError> {
         Ok(match self.issued.lock().unwrap().get(payment_hash) {
-            Some(&amount_sats) => InvoiceStatus::Paid { amount_sats },
+            Some(&(amount_sats, true)) => InvoiceStatus::Paid { amount_sats },
+            Some(_) => InvoiceStatus::Pending,
             None => InvoiceStatus::Failed,
         })
     }
@@ -570,9 +659,12 @@ impl LightningAdapter for PaidNode {
 #[tokio::test]
 async fn watcher_settles_paid_invoices_once() {
     use satsbridge::services::settlement;
-    let app = build(120, |_, _, lightning| *lightning = Arc::new(PaidNode::default())).await;
+    let app = app_with(120).await;
     let (id, invoice) = app.ngn_payment_awaiting_invoice().await;
+    assert_eq!(settlement::poll_once(&app.state).await.unwrap(), 0);
 
+    // Paid without a webhook reaching us: the watcher picks it up.
+    app.node.mark_paid(invoice["payment_hash"].as_str().unwrap());
     assert_eq!(settlement::poll_once(&app.state).await.unwrap(), 1);
     assert_eq!(settlement::poll_once(&app.state).await.unwrap(), 0);
     assert_eq!(app.status_of(&id).await["status"], "PAYOUT_PENDING");

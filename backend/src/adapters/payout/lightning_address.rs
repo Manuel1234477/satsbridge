@@ -8,14 +8,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use lightning_invoice::{Bolt11Invoice, Bolt11InvoiceDescriptionRef};
 use reqwest::Url;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::{Institution, InstitutionKind, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient};
 use crate::{
-    adapters::{AdapterError, lightning::LightningAdapter},
+    adapters::{
+        AdapterError,
+        lightning::{LightningAdapter, decode_invoice},
+    },
     domain::{Currency, Rail, Recipient},
 };
 
@@ -177,15 +179,14 @@ impl LightningAddressAdapter {
 /// LUD-06: the invoice must be for exactly the requested amount and commit to the metadata.
 pub fn verify_invoice(pr: &str, amount_msat: u64, metadata: &str) -> Result<(), AdapterError> {
     let bad = |m: &str| AdapterError::Rejected(format!("invoice from Lightning Address rejected: {m}"));
-    let invoice: Bolt11Invoice = pr.trim().parse().map_err(|_| bad("not a valid BOLT11 invoice"))?;
-    if invoice.amount_milli_satoshis() != Some(amount_msat) {
+    let invoice = decode_invoice(pr).map_err(|_| bad("not a valid BOLT11 invoice"))?;
+    if invoice.amount_msat != Some(amount_msat) {
         return Err(bad("amount does not match the request"));
     }
-    match invoice.description() {
-        Bolt11InvoiceDescriptionRef::Hash(hash) if hash.0.to_string() == hex::encode(Sha256::digest(metadata)) => {}
-        _ => return Err(bad("description hash does not match metadata")),
+    if invoice.description_hash.as_deref() != Some(hex::encode(Sha256::digest(metadata)).as_str()) {
+        return Err(bad("description hash does not match metadata"));
     }
-    if invoice.is_expired() {
+    if invoice.expires_at_unix <= chrono::Utc::now().timestamp().max(0) as u64 {
         return Err(bad("invoice already expired"));
     }
     Ok(())
@@ -292,7 +293,34 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::adapters::lightning::MockLightningAdapter;
+    use crate::adapters::lightning::{Invoice, InvoiceStatus, PaymentSent};
+
+    /// Node that pays any valid invoice.
+    struct PayingNode;
+
+    #[async_trait]
+    impl LightningAdapter for PayingNode {
+        fn name(&self) -> &'static str {
+            "paying-node"
+        }
+
+        async fn create_invoice(&self, _: i64, _: &str, _: i64) -> Result<Invoice, AdapterError> {
+            unreachable!("payouts never create invoices")
+        }
+
+        async fn pay_invoice(&self, pr: &str, _: i64) -> Result<PaymentSent, AdapterError> {
+            let hash = decode_invoice(pr).unwrap().payment_hash;
+            Ok(PaymentSent {
+                payment_hash: hash,
+                preimage: String::new(),
+                fee_sats: 0,
+            })
+        }
+
+        async fn invoice_status(&self, _: &str) -> Result<InvoiceStatus, AdapterError> {
+            Ok(InvoiceStatus::Pending)
+        }
+    }
 
     const METADATA: &str = r#"[["text/plain","Pay ada@tapnob.io"],["text/identifier","ada@tapnob.io"]]"#;
 
@@ -344,7 +372,7 @@ mod tests {
     fn adapter(domain: &str) -> LightningAddressAdapter {
         LightningAddressAdapter::new(
             reqwest::Client::new(),
-            Arc::new(MockLightningAdapter),
+            Arc::new(PayingNode),
             LightningAddressConfig {
                 provider: "tapnob",
                 display_name: "Tapnob",
