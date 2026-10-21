@@ -21,6 +21,8 @@ pub enum AmountSide {
 #[derive(Clone, Debug, Serialize, FromRow)]
 pub struct Quote {
     pub id: String,
+    #[serde(skip_serializing)]
+    pub user_id: Option<String>,
     pub source_currency: Currency,
     pub destination_currency: Currency,
     pub destination_rail: Rail,
@@ -45,6 +47,8 @@ pub struct Quote {
 #[derive(Clone, Debug, Serialize, FromRow)]
 pub struct PaymentIntent {
     pub id: String,
+    #[serde(skip_serializing)]
+    pub user_id: Option<String>,
     pub quote_id: String,
     pub source_currency: Currency,
     pub destination_currency: Currency,
@@ -64,6 +68,10 @@ pub struct PaymentIntent {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// Hash of the Lightning refund to the sender; set while a refund is in flight or done.
+    pub refund_payment_hash: Option<String>,
+    pub refund_sats: Option<i64>,
+    pub refunded_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, sqlx::Type)]
@@ -113,6 +121,11 @@ pub struct Payout {
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub reversed_at: Option<DateTime<Utc>>,
+    /// Submission attempts so far; each one is claimed atomically (see `claim_payout_attempt`).
+    pub attempts: i64,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub needs_review: bool,
+    pub review_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, FromRow)]
@@ -146,13 +159,14 @@ pub fn is_unique_violation(err: &sqlx::Error) -> bool {
 
 pub async fn insert_quote<'e>(db: impl SqliteExecutor<'e>, q: &Quote) -> sqlx::Result<()> {
     sqlx::query(
-        "INSERT INTO quotes (id, source_currency, destination_currency, destination_rail,
+        "INSERT INTO quotes (id, user_id, source_currency, destination_currency, destination_rail,
             payout_amount_guaranteed, amount_side, source_amount,
             destination_amount, amount_sats, fee_sats, fee_source_amount, fee_bps, exchange_rate,
             rate_source, rate_as_of, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&q.id)
+    .bind(&q.user_id)
     .bind(q.source_currency)
     .bind(q.destination_currency)
     .bind(q.destination_rail)
@@ -185,13 +199,14 @@ pub async fn get_quote<'e>(db: impl SqliteExecutor<'e>, id: &str) -> sqlx::Resul
 
 pub async fn insert_payment<'e>(db: impl SqliteExecutor<'e>, p: &PaymentIntent) -> sqlx::Result<()> {
     sqlx::query(
-        "INSERT INTO payment_intents (id, quote_id, source_currency, destination_currency,
+        "INSERT INTO payment_intents (id, user_id, quote_id, source_currency, destination_currency,
             source_amount, expected_payout, amount_sats, fee_sats, exchange_rate, recipient,
             recipient_rail, recipient_masked, recipient_name, status, failure_reason, created_at,
             updated_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&p.id)
+    .bind(&p.user_id)
     .bind(&p.quote_id)
     .bind(p.source_currency)
     .bind(p.destination_currency)
@@ -345,8 +360,8 @@ pub async fn insert_payout<'e>(db: impl SqliteExecutor<'e>, p: &Payout) -> sqlx:
     sqlx::query(
         "INSERT INTO payouts (payment_intent_id, provider, rail, destination_currency,
             destination_amount, destination_reference, account_name, provider_reference, status,
-            failure_reason, created_at, completed_at, reversed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            failure_reason, created_at, completed_at, reversed_at, attempts, last_attempt_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&p.payment_intent_id)
     .bind(&p.provider)
@@ -361,6 +376,8 @@ pub async fn insert_payout<'e>(db: impl SqliteExecutor<'e>, p: &Payout) -> sqlx:
     .bind(p.created_at)
     .bind(p.completed_at)
     .bind(p.reversed_at)
+    .bind(p.attempts)
+    .bind(p.last_attempt_at)
     .execute(db)
     .await?;
     Ok(())
@@ -513,5 +530,244 @@ pub async fn list_awaiting_lightning<'e>(
     .bind(LightningStatus::Pending)
     .bind(limit)
     .fetch_all(db)
+    .await
+}
+
+// --- users ---
+
+#[derive(Clone, Debug, Serialize, FromRow)]
+pub struct User {
+    pub id: String,
+    pub contact: Option<String>,
+    #[serde(skip_serializing)]
+    pub token_hash: String,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn insert_user<'e>(db: impl SqliteExecutor<'e>, u: &User) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO users (id, contact, token_hash, created_at) VALUES (?, ?, ?, ?)")
+        .bind(&u.id)
+        .bind(&u.contact)
+        .bind(&u.token_hash)
+        .bind(u.created_at)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_user_by_token_hash<'e>(db: impl SqliteExecutor<'e>, token_hash: &str) -> sqlx::Result<Option<User>> {
+    sqlx::query_as("SELECT * FROM users WHERE token_hash = ?")
+        .bind(token_hash)
+        .fetch_optional(db)
+        .await
+}
+
+pub async fn list_payments_for_user<'e>(
+    db: impl SqliteExecutor<'e>,
+    user_id: &str,
+    limit: i64,
+) -> sqlx::Result<Vec<PaymentIntent>> {
+    sqlx::query_as("SELECT * FROM payment_intents WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+        .bind(user_id)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+}
+
+// --- payout recovery ---
+
+/// Claims the next submission attempt. Only the caller that moves `attempts` from `expected`
+/// may submit, so the settlement path and the recovery worker never submit concurrently.
+pub async fn claim_payout_attempt(
+    conn: &mut SqliteConnection,
+    payment_id: &str,
+    expected_attempts: i64,
+) -> sqlx::Result<bool> {
+    let claimed = sqlx::query(
+        "UPDATE payouts SET attempts = attempts + 1, last_attempt_at = ?
+         WHERE payment_intent_id = ? AND attempts = ? AND status = ? AND needs_review = 0",
+    )
+    .bind(Utc::now())
+    .bind(payment_id)
+    .bind(expected_attempts)
+    .bind(PayoutStatus::Pending)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    Ok(claimed == 1)
+}
+
+/// Payouts the provider has not accepted yet, for payments still awaiting payout.
+pub async fn list_unsubmitted_payouts<'e>(db: impl SqliteExecutor<'e>) -> sqlx::Result<Vec<Payout>> {
+    sqlx::query_as(
+        "SELECT o.* FROM payouts o JOIN payment_intents p ON p.id = o.payment_intent_id
+         WHERE o.status = ? AND o.needs_review = 0 AND p.status = ?
+         ORDER BY o.created_at LIMIT 100",
+    )
+    .bind(PayoutStatus::Pending)
+    .bind(PaymentStatus::PayoutPending)
+    .fetch_all(db)
+    .await
+}
+
+/// Accepted payouts with no final status since `before`, to ask the provider about.
+pub async fn list_unconfirmed_payouts<'e>(
+    db: impl SqliteExecutor<'e>,
+    before: DateTime<Utc>,
+) -> sqlx::Result<Vec<Payout>> {
+    sqlx::query_as(
+        "SELECT o.* FROM payouts o JOIN payment_intents p ON p.id = o.payment_intent_id
+         WHERE o.status = ? AND p.status = ? AND o.last_attempt_at < ?
+         ORDER BY o.created_at LIMIT 100",
+    )
+    .bind(PayoutStatus::Submitted)
+    .bind(PaymentStatus::PayoutPending)
+    .bind(before)
+    .fetch_all(db)
+    .await
+}
+
+pub async fn flag_payout_review<'e>(db: impl SqliteExecutor<'e>, payment_id: &str, reason: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE payouts SET needs_review = 1, review_reason = ? WHERE payment_intent_id = ?")
+        .bind(reason)
+        .bind(payment_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Admin retry: clear the review flag and let the recovery worker try again immediately.
+pub async fn release_payout_for_retry<'e>(db: impl SqliteExecutor<'e>, payment_id: &str) -> sqlx::Result<bool> {
+    let updated = sqlx::query(
+        "UPDATE payouts SET needs_review = 0, review_reason = NULL, last_attempt_at = NULL
+         WHERE payment_intent_id = ? AND status = ?",
+    )
+    .bind(payment_id)
+    .bind(PayoutStatus::Pending)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(updated == 1)
+}
+
+// --- refunds ---
+
+/// Takes the refund lock. Fails if another refund is already in flight or done.
+pub async fn claim_refund<'e>(
+    db: impl SqliteExecutor<'e>,
+    payment_id: &str,
+    payment_hash: &str,
+    sats: i64,
+) -> sqlx::Result<bool> {
+    let claimed = sqlx::query(
+        "UPDATE payment_intents SET refund_payment_hash = ?, refund_sats = ?
+         WHERE id = ? AND status = ? AND refund_payment_hash IS NULL",
+    )
+    .bind(payment_hash)
+    .bind(sats)
+    .bind(payment_id)
+    .bind(PaymentStatus::RefundPending)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(claimed == 1)
+}
+
+pub async fn release_refund<'e>(db: impl SqliteExecutor<'e>, payment_id: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE payment_intents SET refund_payment_hash = NULL, refund_sats = NULL WHERE id = ?")
+        .bind(payment_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn mark_refunded<'e>(db: impl SqliteExecutor<'e>, payment_id: &str, at: DateTime<Utc>) -> sqlx::Result<()> {
+    sqlx::query("UPDATE payment_intents SET refunded_at = ? WHERE id = ?")
+        .bind(at)
+        .bind(payment_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn list_refunds_in_flight<'e>(db: impl SqliteExecutor<'e>) -> sqlx::Result<Vec<PaymentIntent>> {
+    sqlx::query_as("SELECT * FROM payment_intents WHERE status = ? AND refund_payment_hash IS NOT NULL LIMIT 100")
+        .bind(PaymentStatus::RefundPending)
+        .fetch_all(db)
+        .await
+}
+
+// --- admin ---
+
+pub async fn list_payments_filtered<'e>(
+    db: impl SqliteExecutor<'e>,
+    status: Option<PaymentStatus>,
+    needs_review: bool,
+    limit: i64,
+) -> sqlx::Result<Vec<PaymentIntent>> {
+    sqlx::query_as(
+        "SELECT p.* FROM payment_intents p LEFT JOIN payouts o ON o.payment_intent_id = p.id
+         WHERE (?1 IS NULL OR p.status = ?1) AND (?2 = 0 OR o.needs_review = 1)
+         ORDER BY p.created_at DESC LIMIT ?3",
+    )
+    .bind(status)
+    .bind(needs_review)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct StatusCount {
+    pub status: PaymentStatus,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct CorridorStats {
+    pub source_currency: Currency,
+    pub destination_currency: Currency,
+    pub payments: i64,
+    pub completed: i64,
+    /// Sum over completed payments, in destination minor units.
+    pub delivered_minor: i64,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct Timings {
+    /// Invoice created -> settled, over settled invoices.
+    pub avg_settlement_secs: Option<f64>,
+    /// Payout requested -> completed, over completed payouts.
+    pub avg_payout_secs: Option<f64>,
+    pub needs_review: i64,
+}
+
+pub async fn status_counts<'e>(db: impl SqliteExecutor<'e>) -> sqlx::Result<Vec<StatusCount>> {
+    sqlx::query_as("SELECT status, COUNT(*) AS count FROM payment_intents GROUP BY status ORDER BY count DESC")
+        .fetch_all(db)
+        .await
+}
+
+pub async fn corridor_stats<'e>(db: impl SqliteExecutor<'e>) -> sqlx::Result<Vec<CorridorStats>> {
+    sqlx::query_as(
+        "SELECT source_currency, destination_currency, COUNT(*) AS payments,
+                SUM(status = 'COMPLETED') AS completed,
+                COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN expected_payout END), 0) AS delivered_minor
+         FROM payment_intents GROUP BY source_currency, destination_currency ORDER BY payments DESC",
+    )
+    .fetch_all(db)
+    .await
+}
+
+pub async fn timings<'e>(db: impl SqliteExecutor<'e>) -> sqlx::Result<Timings> {
+    sqlx::query_as(
+        "SELECT
+            (SELECT AVG((julianday(settled_at) - julianday(created_at)) * 86400)
+               FROM lightning_payments WHERE settled_at IS NOT NULL) AS avg_settlement_secs,
+            (SELECT AVG((julianday(completed_at) - julianday(created_at)) * 86400)
+               FROM payouts WHERE completed_at IS NOT NULL) AS avg_payout_secs,
+            (SELECT COUNT(*) FROM payouts WHERE needs_review = 1) AS needs_review",
+    )
+    .fetch_one(db)
     .await
 }

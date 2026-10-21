@@ -3,13 +3,14 @@
 //! settlement: payments settle only when LNbits reports them paid.
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Path, State},
     routing::post,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::CurrentUser;
 use crate::{
     db,
     error::{AppError, AppResult},
@@ -32,9 +33,11 @@ struct SimulatePayout {
 
 async fn payout(
     State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
     Json(body): Json<SimulatePayout>,
 ) -> AppResult<Json<Value>> {
+    payments::owned_payment(&state, &id, &user.0).await?;
     let payout = db::get_payout(&state.pool, &id)
         .await?
         .ok_or(AppError::NotFound("payout"))?;

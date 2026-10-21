@@ -1,5 +1,6 @@
 //! Integrations behind traits so real providers can replace the demo mocks (PRD FR-09 / FR-12).
 
+pub mod bitnob;
 pub mod fx;
 pub mod lightning;
 pub mod payout;

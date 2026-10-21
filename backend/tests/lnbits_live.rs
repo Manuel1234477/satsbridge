@@ -10,7 +10,7 @@
 use std::time::Duration;
 
 use satsbridge::adapters::lightning::{
-    InvoiceStatus, LightningAdapter,
+    InvoiceDescription, InvoiceStatus, LightningAdapter,
     lnbits::{LnbitsAdapter, LnbitsConfig},
 };
 
@@ -49,7 +49,14 @@ async fn receive_and_send_on_a_real_lnbits() {
     eprintln!("wallet {:?} balance {} sats", info.name, info.balance / 1000);
 
     let invoice = payee
-        .create_invoice(21, "satsbridge live test", 600)
+        .create_invoice(
+            21,
+            &InvoiceDescription {
+                memo: "satsbridge live test".into(),
+                lnurl_metadata: None,
+            },
+            600,
+        )
         .await
         .expect("create invoice");
     assert_eq!(

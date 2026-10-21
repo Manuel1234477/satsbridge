@@ -15,6 +15,15 @@ pub enum InvoiceStatus {
     Failed,
 }
 
+/// What an invoice describes itself as.
+pub struct InvoiceDescription {
+    /// Plain description, used when there is no metadata.
+    pub memo: String,
+    /// LNURL-pay metadata JSON. When set, the invoice commits to its SHA-256 (description hash),
+    /// as LUD-06 requires, so the same invoice serves both BOLT11 and LNURL-pay.
+    pub lnurl_metadata: Option<String>,
+}
+
 pub struct Invoice {
     pub payment_request: String,
     pub payment_hash: String,
@@ -33,7 +42,12 @@ pub struct PaymentSent {
 pub trait LightningAdapter: Send + Sync {
     fn name(&self) -> &'static str;
 
-    async fn create_invoice(&self, amount_sats: i64, memo: &str, expiry_secs: i64) -> Result<Invoice, AdapterError>;
+    async fn create_invoice(
+        &self,
+        amount_sats: i64,
+        description: &InvoiceDescription,
+        expiry_secs: i64,
+    ) -> Result<Invoice, AdapterError>;
 
     /// Pays a BOLT11 invoice. Return `Rejected` only when the payment definitely failed; an
     /// in-flight or unknown outcome must be `Unavailable` so it is never treated as safe to refund.

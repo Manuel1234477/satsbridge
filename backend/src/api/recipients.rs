@@ -16,6 +16,8 @@ use crate::{
 pub struct InstitutionParams {
     currency: Currency,
     rail: Option<Rail>,
+    /// Required for mobile money (several countries share XOF and XAF).
+    country: Option<String>,
 }
 
 pub async fn institutions(
@@ -27,7 +29,7 @@ pub async fn institutions(
         None => state.payouts.default_for(params.currency),
     }
     .ok_or_else(|| AppError::Validation(format!("payouts in {} are not supported on that rail", params.currency)))?;
-    Ok(Json(adapter.institutions().await?))
+    Ok(Json(adapter.institutions(params.country.as_deref()).await?))
 }
 
 pub async fn resolve(

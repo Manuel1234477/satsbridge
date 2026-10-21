@@ -1,18 +1,20 @@
 //! Payment orchestration: payment intent -> Lightning invoice -> settlement -> local payout.
 //!
-//! Exactly-once payout relies on three guards: webhook event dedup (`processed_webhooks`),
-//! compare-and-set status transitions, and the one-payout-per-payment primary key.
+//! Exactly-once payout relies on four guards: webhook event dedup (`processed_webhooks`),
+//! compare-and-set status transitions, the one-payout-per-payment primary key, and atomically
+//! claimed submission attempts (`db::claim_payout_attempt`).
 
 use anyhow::anyhow;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 
-use super::{new_id, recipients};
+use super::{lnurl, new_id, recipients};
 use crate::{
     adapters::{
         AdapterError,
-        payout::{PayoutAdapter, PayoutRequest},
+        lightning::InvoiceDescription,
+        payout::{PayoutAccepted, PayoutAdapter, PayoutRequest},
     },
     db::{self, AuditEvent, LightningPayment, LightningStatus, PaymentIntent, Payout, PayoutStatus},
     domain::{PaymentStatus, Recipient},
@@ -32,8 +34,18 @@ pub struct PaymentDetails {
     #[serde(flatten)]
     pub payment: PaymentIntent,
     pub lightning: Option<LightningPayment>,
+    /// LNURL-pay code for this payment (`LNURL1...`), when `PUBLIC_BASE_URL` is set.
+    pub lnurl: Option<String>,
     pub payout: Option<Payout>,
     pub events: Vec<AuditEvent>,
+}
+
+/// `POST /payments/{id}/pay` response: the invoice, plus the same payment as LNURL-pay.
+#[derive(Debug, Serialize)]
+pub struct PayResponse {
+    #[serde(flatten)]
+    pub lightning: LightningPayment,
+    pub lnurl: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,9 +82,18 @@ pub struct PayoutEvent {
     pub reason: Option<String>,
 }
 
-pub async fn create_payment(state: &AppState, req: CreatePaymentRequest) -> AppResult<PaymentIntent> {
+/// The payment, if it exists and belongs to `user_id`. Other users' payments are "not found".
+pub async fn owned_payment(state: &AppState, id: &str, user_id: &str) -> AppResult<PaymentIntent> {
+    db::get_payment(&state.pool, id)
+        .await?
+        .filter(|p| p.user_id.as_deref() == Some(user_id))
+        .ok_or(AppError::NotFound("payment"))
+}
+
+pub async fn create_payment(state: &AppState, user_id: &str, req: CreatePaymentRequest) -> AppResult<PaymentIntent> {
     let quote = db::get_quote(&state.pool, &req.quote_id)
         .await?
+        .filter(|q| q.user_id.as_deref() == Some(user_id))
         .ok_or(AppError::NotFound("quote"))?;
     if quote.expires_at <= Utc::now() {
         return Err(AppError::QuoteExpired);
@@ -100,11 +121,23 @@ pub async fn create_payment(state: &AppState, req: CreatePaymentRequest) -> AppR
             "amount is outside what this recipient can receive".into(),
         ));
     }
-    let recipient_name = resolved.account_name;
+    if resolved.min_minor.is_some_and(|min| quote.destination_amount < min)
+        || resolved.max_minor.is_some_and(|max| quote.destination_amount > max)
+    {
+        return Err(AppError::Validation(format!(
+            "amount is outside the payout limits for this recipient's country ({}..{} minor units)",
+            resolved.min_minor.unwrap_or(0),
+            resolved
+                .max_minor
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "no max".into())
+        )));
+    }
 
     let now = Utc::now();
     let mut payment = PaymentIntent {
         id: new_id("pay"),
+        user_id: Some(user_id.to_string()),
         quote_id: quote.id,
         source_currency: quote.source_currency,
         destination_currency: quote.destination_currency,
@@ -116,12 +149,15 @@ pub async fn create_payment(state: &AppState, req: CreatePaymentRequest) -> AppR
         recipient_rail: rail,
         recipient_masked: req.recipient.masked_reference(),
         recipient: Json(req.recipient),
-        recipient_name,
+        recipient_name: resolved.account_name,
         status: PaymentStatus::Created,
         failure_reason: None,
         created_at: now,
         updated_at: now,
         expires_at: quote.expires_at,
+        refund_payment_hash: None,
+        refund_sats: None,
+        refunded_at: None,
     };
 
     let mut tx = state.pool.begin().await?;
@@ -156,28 +192,36 @@ pub async fn create_payment(state: &AppState, req: CreatePaymentRequest) -> AppR
     Ok(payment)
 }
 
-pub async fn get_details(state: &AppState, id: &str) -> AppResult<PaymentDetails> {
-    let payment = db::get_payment(&state.pool, id)
-        .await?
-        .ok_or(AppError::NotFound("payment"))?;
+pub async fn get_details(state: &AppState, payment: PaymentIntent) -> AppResult<PaymentDetails> {
+    let id = payment.id.as_str();
     let (lightning, payout, events) = tokio::try_join!(
         db::get_lightning_by_payment(&state.pool, id),
         db::get_payout(&state.pool, id),
         db::list_audit(&state.pool, id),
     )?;
+    let lnurl = lnurl::for_payment(state, &payment);
     Ok(PaymentDetails {
         payment,
         lightning,
+        lnurl,
         payout,
         events,
     })
 }
 
 /// Returns the Lightning invoice for a payment, creating it on first call. Safe to call repeatedly.
-pub async fn pay(state: &AppState, id: &str) -> AppResult<LightningPayment> {
-    let payment = db::get_payment(&state.pool, id)
-        .await?
-        .ok_or(AppError::NotFound("payment"))?;
+pub async fn pay(state: &AppState, payment: &PaymentIntent) -> AppResult<PayResponse> {
+    let lightning = invoice_for(state, payment).await?;
+    Ok(PayResponse {
+        lightning,
+        lnurl: lnurl::for_payment(state, payment),
+    })
+}
+
+/// The payment's single invoice. It commits to the LNURL metadata, so wallets paying by BOLT11
+/// and by LNURL-pay pay the same invoice and the sender can never pay twice.
+pub async fn invoice_for(state: &AppState, payment: &PaymentIntent) -> AppResult<LightningPayment> {
+    let id = payment.id.as_str();
     match payment.status {
         PaymentStatus::AwaitingPayment => return existing_invoice(state, id).await,
         PaymentStatus::Quoted => {}
@@ -203,13 +247,13 @@ pub async fn pay(state: &AppState, id: &str) -> AppResult<LightningPayment> {
         return Err(AppError::QuoteExpired);
     }
 
+    let description = InvoiceDescription {
+        memo: format!("SatsBridge {id}"),
+        lnurl_metadata: Some(lnurl::metadata(payment)),
+    };
     let invoice = state
         .lightning
-        .create_invoice(
-            payment.amount_sats,
-            &format!("SatsBridge {id}"),
-            state.config.invoice_expiry_secs,
-        )
+        .create_invoice(payment.amount_sats, &description, state.config.invoice_expiry_secs)
         .await?;
     let lightning = LightningPayment {
         payment_intent_id: payment.id.clone(),
@@ -254,6 +298,22 @@ async fn existing_invoice(state: &AppState, id: &str) -> AppResult<LightningPaym
         .ok_or_else(|| AppError::Internal(anyhow!("payment {id} is awaiting payment but has no invoice")))
 }
 
+pub fn adapter_for<'a>(
+    state: &'a AppState,
+    payment: &PaymentIntent,
+) -> AppResult<&'a std::sync::Arc<dyn PayoutAdapter>> {
+    state
+        .payouts
+        .get(payment.destination_currency, payment.recipient_rail)
+        .ok_or_else(|| {
+            AppError::Internal(anyhow!(
+                "no {} payout adapter for {}",
+                payment.recipient_rail.as_str(),
+                payment.destination_currency
+            ))
+        })
+}
+
 /// Settlement -> exactly one payout request.
 pub async fn handle_lightning_settled(state: &AppState, event: LightningEvent) -> AppResult<WebhookOutcome> {
     let mut tx = state.pool.begin().await?;
@@ -291,16 +351,7 @@ pub async fn handle_lightning_settled(state: &AppState, event: LightningEvent) -
     }
     db::mark_lightning_settled(&mut *tx, id, Utc::now()).await?;
 
-    let adapter = state
-        .payouts
-        .get(payment.destination_currency, payment.recipient_rail)
-        .ok_or_else(|| {
-            AppError::Internal(anyhow!(
-                "no {} payout adapter for {}",
-                payment.recipient_rail.as_str(),
-                payment.destination_currency
-            ))
-        })?;
+    let adapter = adapter_for(state, &payment)?;
     db::transition(
         &mut tx,
         id,
@@ -310,6 +361,7 @@ pub async fn handle_lightning_settled(state: &AppState, event: LightningEvent) -
         Some(adapter.provider()),
     )
     .await?;
+    let now = Utc::now();
     db::insert_payout(
         &mut *tx,
         &Payout {
@@ -323,23 +375,41 @@ pub async fn handle_lightning_settled(state: &AppState, event: LightningEvent) -
             provider_reference: None,
             status: PayoutStatus::Pending,
             failure_reason: None,
-            created_at: Utc::now(),
+            created_at: now,
             completed_at: None,
             reversed_at: None,
+            attempts: 0,
+            last_attempt_at: Some(now),
+            needs_review: false,
+            review_reason: None,
         },
     )
     .await?;
     tx.commit().await?;
 
-    // TODO: move submission to an outbox worker so a crash here is retried automatically.
-    // Retrying is safe because the payment ID is the provider idempotency key.
-    submit_payout(state, &payment, adapter.as_ref()).await?;
+    // If this process dies here, the recovery worker resubmits (see `services::recovery`).
+    submit_payout(state, &payment, adapter.as_ref(), 0).await?;
     Ok(WebhookOutcome::Processed)
 }
 
-async fn submit_payout(state: &AppState, payment: &PaymentIntent, adapter: &dyn PayoutAdapter) -> AppResult<()> {
+/// Submits attempt `previous_attempts + 1`, if this caller wins the claim for it.
+/// Returns false when another caller already took that attempt.
+pub async fn submit_payout(
+    state: &AppState,
+    payment: &PaymentIntent,
+    adapter: &dyn PayoutAdapter,
+    previous_attempts: i64,
+) -> AppResult<bool> {
+    {
+        let mut conn = state.pool.acquire().await?;
+        if !db::claim_payout_attempt(&mut conn, &payment.id, previous_attempts).await? {
+            return Ok(false);
+        }
+    }
+    let attempt = previous_attempts + 1;
     let request = PayoutRequest {
         idempotency_key: &payment.id,
+        attempt,
         recipient: &payment.recipient.0,
         account_name: payment.recipient_name.as_deref(),
         amount_minor: payment.expected_payout,
@@ -348,56 +418,78 @@ async fn submit_payout(state: &AppState, payment: &PaymentIntent, adapter: &dyn 
         narration: format!("SatsBridge {}", payment.id),
     };
     match adapter.create_payout(request).await {
-        Ok(accepted) => {
-            let reference = accepted.provider_reference.as_str();
-            let mut tx = state.pool.begin().await?;
-            db::mark_payout_submitted(&mut *tx, &payment.id, reference).await?;
-            db::insert_audit(&mut *tx, &payment.id, "payout.submitted", None, None, Some(reference)).await?;
-            if accepted.completed {
-                // Rail confirmed delivery synchronously (Lightning Address); no webhook will follow.
-                db::update_payout_status(&mut *tx, &payment.id, PayoutStatus::Completed, None, Utc::now()).await?;
-                db::transition(
-                    &mut tx,
-                    &payment.id,
-                    PaymentStatus::PayoutPending,
-                    PaymentStatus::Completed,
-                    "payout.completed",
-                    Some(reference),
-                )
-                .await?;
-            }
-            tx.commit().await?;
-        }
+        Ok(accepted) => record_accepted(state, &payment.id, &accepted).await?,
         Err(AdapterError::Unavailable(reason)) => {
-            tracing::warn!(payment_id = %payment.id, %reason, "payout provider unavailable; will retry");
+            tracing::warn!(payment_id = %payment.id, attempt, %reason, "payout attempt unconfirmed; recovery will follow up");
             db::insert_audit(
                 &state.pool,
                 &payment.id,
-                "payout.submit_deferred",
+                "payout.attempt_unconfirmed",
                 None,
                 None,
                 Some(&reason),
             )
             .await?;
+            if !adapter.safe_to_retry() {
+                let why = format!("{} payout outcome unknown: {reason}", adapter.provider());
+                db::flag_payout_review(&state.pool, &payment.id, &why).await?;
+            }
         }
-        Err(err) => {
-            let reason = err.to_string();
-            tracing::error!(payment_id = %payment.id, %reason, "payout rejected");
-            let mut tx = state.pool.begin().await?;
-            db::update_payout_status(&mut *tx, &payment.id, PayoutStatus::Failed, Some(&reason), Utc::now()).await?;
-            db::set_failure_reason(&mut *tx, &payment.id, &reason).await?;
-            db::transition(
-                &mut tx,
-                &payment.id,
-                PaymentStatus::PayoutPending,
-                PaymentStatus::Failed,
-                "payout.rejected",
-                Some(&reason),
-            )
-            .await?;
-            tx.commit().await?;
-        }
+        Err(err) => fail_payout(state, &payment.id, "payout.rejected", &err.to_string()).await?,
     }
+    Ok(true)
+}
+
+/// Stores the provider's acceptance; completes the payment if the rail confirmed delivery.
+pub async fn record_accepted(state: &AppState, payment_id: &str, accepted: &PayoutAccepted) -> AppResult<()> {
+    let reference = accepted.provider_reference.as_str();
+    let mut tx = state.pool.begin().await?;
+    db::mark_payout_submitted(&mut *tx, payment_id, reference).await?;
+    db::insert_audit(&mut *tx, payment_id, "payout.submitted", None, None, Some(reference)).await?;
+    if accepted.completed {
+        // Rail confirmed delivery synchronously (Lightning Address); no webhook will follow.
+        db::update_payout_status(&mut *tx, payment_id, PayoutStatus::Completed, None, Utc::now()).await?;
+        db::transition(
+            &mut tx,
+            payment_id,
+            PaymentStatus::PayoutPending,
+            PaymentStatus::Completed,
+            "payout.completed",
+            Some(reference),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// PAYOUT_PENDING -> FAILED -> REFUND_PENDING: the sender's sats are owed back.
+async fn fail_payout(state: &AppState, payment_id: &str, event: &str, reason: &str) -> AppResult<()> {
+    tracing::error!(%payment_id, %reason, "payout failed");
+    let mut tx = state.pool.begin().await?;
+    let failed = db::transition(
+        &mut tx,
+        payment_id,
+        PaymentStatus::PayoutPending,
+        PaymentStatus::Failed,
+        event,
+        Some(reason),
+    )
+    .await?;
+    if failed {
+        db::update_payout_status(&mut *tx, payment_id, PayoutStatus::Failed, Some(reason), Utc::now()).await?;
+        db::set_failure_reason(&mut *tx, payment_id, reason).await?;
+        db::transition(
+            &mut tx,
+            payment_id,
+            PaymentStatus::Failed,
+            PaymentStatus::RefundPending,
+            "refund.pending",
+            None,
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -443,6 +535,15 @@ pub async fn handle_payout_event(state: &AppState, event: PayoutEvent) -> AppRes
             if ok {
                 db::update_payout_status(&mut *tx, id, PayoutStatus::Failed, Some(reason), now).await?;
                 db::set_failure_reason(&mut *tx, id, reason).await?;
+                db::transition(
+                    &mut tx,
+                    id,
+                    PaymentStatus::Failed,
+                    PaymentStatus::RefundPending,
+                    "refund.pending",
+                    None,
+                )
+                .await?;
             }
             ok
         }

@@ -219,7 +219,12 @@ impl PayoutAdapter for LightningAddressAdapter {
         false
     }
 
-    async fn institutions(&self) -> Result<Vec<Institution>, AdapterError> {
+    /// A retry would fetch a fresh invoice and could pay twice, so unconfirmed payouts go to review.
+    fn safe_to_retry(&self) -> bool {
+        false
+    }
+
+    async fn institutions(&self, _country: Option<&str>) -> Result<Vec<Institution>, AdapterError> {
         Ok(self
             .config
             .allowed_domains
@@ -238,6 +243,7 @@ impl PayoutAdapter for LightningAddressAdapter {
             account_name: None,
             min_sats: Some(params.min_msat.div_ceil(1000) as i64),
             max_sats: Some((params.max_msat / 1000) as i64),
+            ..Default::default()
         })
     }
 
@@ -293,7 +299,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::adapters::lightning::{Invoice, InvoiceStatus, PaymentSent};
+    use crate::adapters::lightning::{Invoice, InvoiceDescription, InvoiceStatus, PaymentSent};
 
     /// Node that pays any valid invoice.
     struct PayingNode;
@@ -304,7 +310,7 @@ mod tests {
             "paying-node"
         }
 
-        async fn create_invoice(&self, _: i64, _: &str, _: i64) -> Result<Invoice, AdapterError> {
+        async fn create_invoice(&self, _: i64, _: &InvoiceDescription, _: i64) -> Result<Invoice, AdapterError> {
             unreachable!("payouts never create invoices")
         }
 
@@ -398,6 +404,7 @@ mod tests {
         let accepted = ln
             .create_payout(PayoutRequest {
                 idempotency_key: "pay_1",
+                attempt: 1,
                 recipient: &r,
                 account_name: None,
                 amount_minor: 22_000_000,
