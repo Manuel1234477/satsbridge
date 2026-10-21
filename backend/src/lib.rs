@@ -4,6 +4,7 @@ pub mod config;
 pub mod db;
 pub mod domain;
 pub mod error;
+pub mod ratelimit;
 pub mod security;
 pub mod services;
 pub mod state;

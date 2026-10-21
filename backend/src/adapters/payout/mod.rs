@@ -4,10 +4,13 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use super::AdapterError;
-use crate::domain::{Currency, Rail, Recipient};
+use crate::{
+    domain::{Currency, Rail, Recipient},
+    services::payments::PayoutEventStatus,
+};
 
-pub mod bitnob;
 pub mod lightning_address;
+pub mod mobile_money_mock;
 pub mod ngn_mock;
 pub mod tando_mock;
 
@@ -32,11 +35,16 @@ pub struct ResolvedRecipient {
     /// Amount bounds the destination itself accepts (e.g. LNURL min/maxSendable).
     pub min_sats: Option<i64>,
     pub max_sats: Option<i64>,
+    /// Destination-amount limits for this recipient's country, where they differ by country.
+    pub min_minor: Option<i64>,
+    pub max_minor: Option<i64>,
 }
 
 pub struct PayoutRequest<'a> {
     /// The payment intent ID. Providers must treat repeats of this key as the same payout.
     pub idempotency_key: &'a str,
+    /// 1 for the first submission; retries count up.
+    pub attempt: i64,
     pub recipient: &'a Recipient,
     /// Name confirmed by the sender (from account resolution), where the rail has one.
     pub account_name: Option<&'a str>,
@@ -75,12 +83,34 @@ pub trait PayoutAdapter: Send + Sync {
         true
     }
 
-    async fn institutions(&self) -> Result<Vec<Institution>, AdapterError>;
+    /// Countries this rail pays into (ISO alpha-2), for multi-country rails; empty otherwise.
+    fn countries(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Whether the recovery worker may resubmit after an unconfirmed attempt. Rails that can't
+    /// tell whether an earlier attempt went through must return false; those go to manual review.
+    fn safe_to_retry(&self) -> bool {
+        true
+    }
+
+    /// `country` is required by multi-country rails (mobile money).
+    async fn institutions(&self, country: Option<&str>) -> Result<Vec<Institution>, AdapterError>;
 
     /// Validates the destination and, where the rail supports it, looks up the account holder's name.
     async fn resolve_recipient(&self, recipient: &Recipient) -> Result<ResolvedRecipient, AdapterError>;
 
     async fn create_payout(&self, request: PayoutRequest<'_>) -> Result<PayoutAccepted, AdapterError>;
+
+    /// Looks for a payout an earlier attempt already got accepted, before resubmitting.
+    async fn find_payout(&self, _idempotency_key: &str) -> Result<Option<PayoutAccepted>, AdapterError> {
+        Ok(None)
+    }
+
+    /// Final status of an accepted payout, if the provider has one, for when webhooks don't arrive.
+    async fn payout_status(&self, _provider_reference: &str) -> Result<Option<PayoutEventStatus>, AdapterError> {
+        Ok(None)
+    }
 }
 
 #[derive(Default)]
@@ -105,10 +135,11 @@ impl PayoutRegistry {
             .map(|(_, a)| a)
     }
 
-    /// The rail used when a quote doesn't name one: bank/mobile money before Lightning Address.
+    /// The rail used when a quote doesn't name one: bank/mobile money before Lightning Address,
+    /// real providers before mocks.
     pub fn default_for(&self, currency: Currency) -> Option<&Arc<dyn PayoutAdapter>> {
         let mut adapters: Vec<_> = self.for_currency(currency).collect();
-        adapters.sort_by_key(|a| a.rail() == Rail::LightningAddress);
+        adapters.sort_by_key(|a| (a.rail() == Rail::LightningAddress, a.provider().ends_with("-mock")));
         adapters.into_iter().next()
     }
 }
