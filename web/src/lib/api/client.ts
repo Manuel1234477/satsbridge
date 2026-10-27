@@ -34,7 +34,7 @@ export async function apiRequest<T>(
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  const data = await response.json();
+  const data = await response.json() as any;
 
   if (!response.ok) {
     const errorData = ErrorResponseSchema.safeParse(data);
@@ -52,7 +52,7 @@ export async function apiRequest<T>(
     throw new Error('Invalid response from server');
   }
 
-  return parsed.data;
+  return parsed.data as T;
 }
 
 export function getStoredToken(): string | null {
