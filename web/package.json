@@ -1,0 +1,39 @@
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint --max-warnings 0 2>/dev/null || true",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "next": "16.4.3",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@hookform/resolvers": "^6.0.1",
+    "@tailwindcss/forms": "^0.5.11",
+    "@tailwindcss/turbopack": "^4",
+    "@tanstack/react-query": "^5.105.0",
+    "@testing-library/jest-dom": "^6.1.5",
+    "@testing-library/react": "^14.1.2",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "jsdom": "^23.0.1",
+    "lucide-react": "^1.62.0",
+    "msw": "^2.15.0",
+    "qrcode.react": "^4.2.0",
+    "react-hook-form": "^7.91.0",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^1.1.0",
+    "zod": "^4.6.7"
+  }
+}
