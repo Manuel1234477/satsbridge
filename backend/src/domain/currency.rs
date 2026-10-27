@@ -49,11 +49,6 @@ impl Currency {
             Currency::Kes | Currency::Ngn => 2,
         }
     }
-
-    /// NGN is payout-only for now (docs/prd-addendum-ngn-payout.md).
-    pub fn can_send(self) -> bool {
-        !matches!(self, Currency::Ngn)
-    }
 }
 
 /// Currency used for payouts in a country (ISO 3166 alpha-2), for the countries we serve.

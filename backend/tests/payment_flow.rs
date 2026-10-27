@@ -144,6 +144,17 @@ async fn rejects_bad_signatures_and_bad_recipients() {
 }
 
 #[tokio::test]
+async fn ngn_can_be_the_source_currency() {
+    let app = app_with(120).await;
+    let quote = app
+        .quote(json!({ "source_currency": "NGN", "destination_currency": "KES", "amount": 5_000_000 }))
+        .await;
+    assert_eq!(quote["source_currency"], "NGN");
+    assert_eq!(quote["destination_currency"], "KES");
+    assert_eq!(quote["source_amount"], 5_000_000);
+}
+
+#[tokio::test]
 async fn expired_quotes_and_limits_are_enforced() {
     let app = app_with(0).await;
     let quote = app
@@ -178,7 +189,7 @@ async fn expired_quotes_and_limits_are_enforced() {
         .iter()
         .find(|c| c["code"] == "NGN")
         .unwrap();
-    assert_eq!(ngn["can_send"], false);
+    assert!(ngn.get("can_send").is_none());
     assert_eq!(ngn["payout_rails"][0]["rail"], "NG_BANK_TRANSFER");
 }
 

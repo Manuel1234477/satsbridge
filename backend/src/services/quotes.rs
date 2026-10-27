@@ -129,11 +129,6 @@ pub async fn create_quote(state: &AppState, user_id: &str, req: CreateQuoteReque
             "source and destination currencies must differ".into(),
         ));
     }
-    if !source.can_send() {
-        return Err(AppError::Validation(format!(
-            "sending from {source} is not supported yet"
-        )));
-    }
     let adapter = match req.rail {
         Some(rail) => state.payouts.get(destination, rail),
         None => state.payouts.default_for(destination),
