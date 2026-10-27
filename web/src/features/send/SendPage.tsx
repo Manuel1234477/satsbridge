@@ -11,7 +11,18 @@ import { parseMoneyInput, getExponent, formatMoney } from '@/lib/money';
 import { Currency, Rail } from '@/lib/api/schemas';
 import { ArrowDownUp, AlertCircle } from 'lucide-react';
 
-export function SendPage() {
+interface SendPageProps {
+  onContinue: (
+    quoteId: string,
+    sourceCurrency: Currency,
+    destCurrency: Currency,
+    sourceAmount: number,
+    destAmount: number,
+    selectedRail: Rail | ''
+  ) => void;
+}
+
+export function SendPage({ onContinue }: SendPageProps = { onContinue: () => {} }) {
   const { data: userReady } = useUser();
   const { data: currencies = [], isLoading: currenciesLoading } = useCurrencies();
   const createQuoteMutation = useCreateQuote();
@@ -227,7 +238,12 @@ export function SendPage() {
 
         {/* Continue button */}
         <button
-          type="submit"
+          type="button"
+          onClick={() => {
+            if (quote && sourceCurrency && destCurrency && sourceAmount !== null && destAmount !== null) {
+              onContinue(quote.id, sourceCurrency, destCurrency, sourceAmount, destAmount, selectedRail);
+            }
+          }}
           disabled={!quote || createQuoteMutation.isPending}
           className="btn btn-primary w-full"
         >

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { Providers } from './providers';
+import { Disclaimer } from '@/components/Disclaimer';
 
 export const metadata: Metadata = {
   title: 'SatsBridge - Cross-border payments with Bitcoin',
@@ -15,9 +16,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body>
+      <body className="pb-20 sm:pb-0">
         <Providers>
           {children}
+          <Disclaimer />
         </Providers>
       </body>
     </html>
