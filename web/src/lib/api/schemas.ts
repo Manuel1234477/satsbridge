@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-// Enums
+// Wire formats verified against backend/src/db.rs, backend/src/domain/*.rs and
+// backend/src/services/*.rs. Payment statuses and rails are SCREAMING_SNAKE_CASE;
+// amount_side, lightning/payout status and dev payout status are snake_case.
+
 export const PaymentStatusSchema = z.enum([
   'CREATED',
   'QUOTED',
@@ -19,24 +22,18 @@ export type PaymentStatus = z.infer<typeof PaymentStatusSchema>;
 export const CurrencySchema = z.enum(['XOF', 'XAF', 'GNF', 'KES', 'NGN']);
 export type Currency = z.infer<typeof CurrencySchema>;
 
-export const RailSchema = z.enum([
-  'KE_MOBILE_MONEY',
-  'NG_BANK_TRANSFER',
-  'LIGHTNING_ADDRESS',
-  'MOBILE_MONEY',
-]);
+export const RailSchema = z.enum(['KE_MOBILE_MONEY', 'NG_BANK_TRANSFER', 'LIGHTNING_ADDRESS', 'MOBILE_MONEY']);
 export type Rail = z.infer<typeof RailSchema>;
 
-export const LightningStatusSchema = z.enum(['PENDING', 'SETTLED']);
-export type LightningStatus = z.infer<typeof LightningStatusSchema>;
-
-export const PayoutStatusSchema = z.enum(['PENDING', 'SUBMITTED', 'COMPLETED', 'FAILED', 'REVERSED']);
-export type PayoutStatus = z.infer<typeof PayoutStatusSchema>;
-
-export const AmountSideSchema = z.enum(['SOURCE', 'DESTINATION']);
+export const AmountSideSchema = z.enum(['source', 'destination']);
 export type AmountSide = z.infer<typeof AmountSideSchema>;
 
-// Models
+export const LightningStatusSchema = z.enum(['pending', 'settled']);
+export type LightningStatus = z.infer<typeof LightningStatusSchema>;
+
+export const PayoutStatusSchema = z.enum(['pending', 'submitted', 'completed', 'failed', 'reversed']);
+export type PayoutStatus = z.infer<typeof PayoutStatusSchema>;
+
 export const QuoteSchema = z.object({
   id: z.string(),
   source_currency: CurrencySchema,
@@ -52,27 +49,21 @@ export const QuoteSchema = z.object({
   fee_bps: z.number().int(),
   exchange_rate: z.string(),
   rate_source: z.string(),
-  rate_as_of: z.string().datetime(),
-  expires_at: z.string().datetime(),
-  created_at: z.string().datetime(),
+  rate_as_of: z.string(),
+  expires_at: z.string(),
+  created_at: z.string(),
 });
 export type Quote = z.infer<typeof QuoteSchema>;
 
 export const RecipientSchema = z.discriminatedUnion('rail', [
-  z.object({
-    rail: z.literal('KE_MOBILE_MONEY'),
-    phone_number: z.string(),
-  }),
+  z.object({ rail: z.literal('KE_MOBILE_MONEY'), phone_number: z.string() }),
   z.object({
     rail: z.literal('NG_BANK_TRANSFER'),
     bank_code: z.string(),
     account_number: z.string(),
-    resolution_id: z.string().optional(),
+    resolution_id: z.string(),
   }),
-  z.object({
-    rail: z.literal('LIGHTNING_ADDRESS'),
-    address: z.string(),
-  }),
+  z.object({ rail: z.literal('LIGHTNING_ADDRESS'), address: z.string() }),
   z.object({
     rail: z.literal('MOBILE_MONEY'),
     country: z.string(),
@@ -98,12 +89,12 @@ export const PaymentIntentSchema = z.object({
   recipient_name: z.string().nullable(),
   status: PaymentStatusSchema,
   failure_reason: z.string().nullable(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
-  expires_at: z.string().datetime(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  expires_at: z.string(),
   refund_payment_hash: z.string().nullable(),
   refund_sats: z.number().int().nullable(),
-  refunded_at: z.string().datetime().nullable(),
+  refunded_at: z.string().nullable(),
 });
 export type PaymentIntent = z.infer<typeof PaymentIntentSchema>;
 
@@ -113,9 +104,9 @@ export const LightningPaymentSchema = z.object({
   payment_hash: z.string(),
   amount_sats: z.number().int(),
   status: LightningStatusSchema,
-  expires_at: z.string().datetime(),
-  settled_at: z.string().datetime().nullable(),
-  created_at: z.string().datetime(),
+  expires_at: z.string(),
+  settled_at: z.string().nullable(),
+  created_at: z.string(),
 });
 export type LightningPayment = z.infer<typeof LightningPaymentSchema>;
 
@@ -130,9 +121,9 @@ export const PayoutSchema = z.object({
   provider_reference: z.string().nullable(),
   status: PayoutStatusSchema,
   failure_reason: z.string().nullable(),
-  created_at: z.string().datetime(),
-  completed_at: z.string().datetime().nullable(),
-  reversed_at: z.string().datetime().nullable(),
+  created_at: z.string(),
+  completed_at: z.string().nullable(),
+  reversed_at: z.string().nullable(),
   needs_review: z.boolean(),
   review_reason: z.string().nullable(),
 });
@@ -145,9 +136,24 @@ export const AuditEventSchema = z.object({
   from_status: PaymentStatusSchema.nullable(),
   to_status: PaymentStatusSchema.nullable(),
   detail: z.string().nullable(),
-  created_at: z.string().datetime(),
+  created_at: z.string(),
 });
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
+
+// GET /payments/{id}: PaymentIntent fields are flattened into the response.
+export const PaymentDetailsSchema = PaymentIntentSchema.extend({
+  lightning: LightningPaymentSchema.nullable(),
+  lnurl: z.string().nullable(),
+  payout: PayoutSchema.nullable(),
+  events: z.array(AuditEventSchema),
+});
+export type PaymentDetails = z.infer<typeof PaymentDetailsSchema>;
+
+// POST /payments/{id}/pay: LightningPayment fields are flattened, plus lnurl.
+export const PayResponseSchema = LightningPaymentSchema.extend({
+  lnurl: z.string().nullable(),
+});
+export type PayResponse = z.infer<typeof PayResponseSchema>;
 
 export const CurrencyInfoSchema = z.object({
   code: CurrencySchema,
@@ -158,8 +164,8 @@ export const CurrencyInfoSchema = z.object({
     z.object({
       rail: RailSchema,
       provider: z.string(),
-      min_payout_minor: z.number().int(),
-      max_payout_minor: z.number().int(),
+      min_payout_minor: z.number().int().nullable(),
+      max_payout_minor: z.number().int().nullable(),
       guaranteed_amount: z.boolean(),
       countries: z.array(z.string()).optional(),
     })
@@ -170,29 +176,29 @@ export type CurrencyInfo = z.infer<typeof CurrencyInfoSchema>;
 export const PayoutInstitutionSchema = z.object({
   code: z.string(),
   name: z.string(),
+  kind: z.enum(['bank', 'wallet', 'mobile_money']),
 });
 export type PayoutInstitution = z.infer<typeof PayoutInstitutionSchema>;
 
 export const UserSchema = z.object({
   user_id: z.string(),
   token: z.string(),
-  created_at: z.string().datetime(),
+  created_at: z.string(),
 });
 export type User = z.infer<typeof UserSchema>;
 
 export const RecipientResolutionSchema = z.object({
   resolution_id: z.string(),
   account_name: z.string(),
+  bank_code: z.string(),
+  account_number_masked: z.string(),
+  expires_at: z.string(),
 });
 export type RecipientResolution = z.infer<typeof RecipientResolutionSchema>;
 
-export const PaymentDetailsSchema = PaymentIntentSchema.extend({
-  lightning: LightningPaymentSchema.nullable(),
-  lnurl: z.string().nullable(),
-  payout: PayoutSchema.nullable(),
-  events: z.array(AuditEventSchema),
+export const DevPayoutOutcomeSchema = z.object({
+  outcome: z.string(),
 });
-export type PaymentDetails = z.infer<typeof PaymentDetailsSchema>;
 
 export const ErrorResponseSchema = z.object({
   error: z.object({
@@ -200,9 +206,3 @@ export const ErrorResponseSchema = z.object({
     message: z.string(),
   }),
 });
-export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
-
-export const TransactionListSchema = z.object({
-  transactions: z.array(PaymentDetailsSchema),
-});
-export type TransactionList = z.infer<typeof TransactionListSchema>;

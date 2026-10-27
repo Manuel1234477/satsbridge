@@ -1,255 +1,219 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
-import { useUser } from '@/hooks/useUser';
-import { useCurrencies } from '@/hooks/useCurrencies';
-import { useCreateQuote } from '@/hooks/useQuote';
-import { CurrencySelector } from '@/components/CurrencySelector';
-import { MoneyInput } from '@/components/MoneyInput';
+import { useCallback, useMemo, useState } from 'react';
+import { ArrowDownUp } from 'lucide-react';
+import { CurrencySelect } from '@/components/CurrencySelect';
+import { MoneyField } from '@/components/MoneyField';
 import { QuoteCard } from '@/components/QuoteCard';
-import { parseMoneyInput, getExponent, formatMoney } from '@/lib/money';
-import { Currency, Rail } from '@/lib/api/schemas';
-import { ArrowDownUp, AlertCircle } from 'lucide-react';
+import { useCountdown } from '@/hooks/useCountdown';
+import { useDebounced } from '@/hooks/useDebounced';
+import { useQuotePreview } from '@/hooks/useQuotePreview';
+import type { CreateQuoteInput } from '@/lib/api';
+import type { CurrencyInfo, Currency, Quote, Rail } from '@/lib/api/schemas';
+import { parseMinor, toInputText } from '@/lib/money';
+import { RAIL_LABELS } from '@/lib/rails';
 
-interface SendPageProps {
-  onContinue: (
-    quoteId: string,
-    sourceCurrency: Currency,
-    destCurrency: Currency,
-    sourceAmount: number,
-    destAmount: number,
-    selectedRail: Rail | ''
-  ) => void;
+export interface SendPrefill {
+  sourceCurrency: Currency;
+  destinationCurrency: Currency;
+  sourceMinor: number;
 }
 
-export function SendPage({ onContinue }: SendPageProps = { onContinue: () => {} }) {
-  const { data: userReady } = useUser();
-  const { data: currencies = [], isLoading: currenciesLoading } = useCurrencies();
-  const createQuoteMutation = useCreateQuote();
+interface SendPageProps {
+  currencies: CurrencyInfo[];
+  prefill?: SendPrefill;
+  onContinue: (quote: Quote, rail: Rail) => void;
+}
 
-  // Form state
-  const [sourceCurrency, setSourceCurrency] = useState<Currency | ''>('');
-  const [destCurrency, setDestCurrency] = useState<Currency | ''>('');
-  const [sourceAmount, setSourceAmount] = useState<number | null>(null);
-  const [destAmount, setDestAmount] = useState<number | null>(null);
-  const [amountSide, setAmountSide] = useState<'SOURCE' | 'DESTINATION'>('SOURCE');
-  const [sourceAmountInput, setSourceAmountInput] = useState('');
-  const [destAmountInput, setDestAmountInput] = useState('');
-  const [selectedRail, setSelectedRail] = useState<Rail | ''>('');
-  const [error, setError] = useState<string>('');
+const DEFAULT_SOURCE: Currency = 'XOF';
+const DEFAULT_DESTINATION: Currency = 'NGN';
 
-  // Quote state
-  const [quoteId, setQuoteId] = useState<string | null>(null);
+export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
+  const [sourceCode, setSourceCode] = useState<Currency>(prefill?.sourceCurrency ?? DEFAULT_SOURCE);
+  const [destinationCode, setDestinationCode] = useState<Currency>(prefill?.destinationCurrency ?? DEFAULT_DESTINATION);
+  const [side, setSide] = useState<'source' | 'destination'>('source');
+  const [sourceText, setSourceText] = useState(() => {
+    const exponent = currencies.find((c) => c.code === (prefill?.sourceCurrency ?? DEFAULT_SOURCE))?.exponent ?? 0;
+    return prefill ? toInputText(prefill.sourceMinor, exponent) : '';
+  });
+  const [destinationText, setDestinationText] = useState('');
+  const [chosenRail, setChosenRail] = useState<Rail | ''>('');
 
-  // Debounce quote creation
-  useEffect(() => {
-    if (!sourceCurrency || !destCurrency || (sourceAmount === null && destAmount === null)) {
-      setQuoteId(null);
-      return;
-    }
+  const sourceInfo = currencies.find((c) => c.code === sourceCode);
+  const destinationInfo = currencies.find((c) => c.code === destinationCode);
+  const sourceExponent = sourceInfo?.exponent ?? 0;
+  const destinationExponent = destinationInfo?.exponent ?? 0;
+  const rails = destinationInfo?.payout_rails ?? [];
+  const activeRail: Rail | null = rails.find((r) => r.rail === chosenRail)?.rail ?? rails[0]?.rail ?? null;
 
-    const amount = amountSide === 'SOURCE' ? sourceAmount : destAmount;
-    if (amount === null || amount === 0) {
-      setQuoteId(null);
-      return;
-    }
+  const typedMinor =
+    side === 'source' ? parseMinor(sourceText, sourceExponent) : parseMinor(destinationText, destinationExponent);
 
-    const timer = setTimeout(() => {
-      createQuoteMutation.mutate(
-        {
-          source_currency: sourceCurrency as Currency,
-          destination_currency: destCurrency as Currency,
-          amount,
-          amount_side: amountSide,
-          rail: (selectedRail as Rail) || undefined,
-        },
-        {
-          onSuccess: (quote) => {
-            setQuoteId(quote.id);
-            setError('');
-            // Update the non-editing side
-            if (amountSide === 'SOURCE') {
-              setDestAmount(quote.destination_amount);
-              setDestAmountInput(formatMoney(quote.destination_amount, destCurrency as Currency));
-            } else {
-              setSourceAmount(quote.source_amount);
-              setSourceAmountInput(formatMoney(quote.source_amount, sourceCurrency as Currency));
-            }
-          },
-          onError: (err: any) => {
-            setError(err.message || 'Failed to get quote');
-            setQuoteId(null);
-          },
-        }
-      );
-    }, 400);
+  const inputKey =
+    sourceInfo && destinationInfo && activeRail && sourceInfo.can_send && typedMinor !== null && typedMinor > 0
+      ? JSON.stringify({
+          source_currency: sourceCode,
+          destination_currency: destinationCode,
+          amount: typedMinor,
+          amount_side: side,
+          rail: activeRail,
+        })
+      : '';
+  const debouncedKey = useDebounced(inputKey, 400);
+  const debouncedInput = useMemo<CreateQuoteInput | null>(
+    () => (debouncedKey ? (JSON.parse(debouncedKey) as CreateQuoteInput) : null),
+    [debouncedKey],
+  );
+  const quoteQuery = useQuotePreview(debouncedInput);
+  const quote = quoteQuery.data;
+  const pending = inputKey !== debouncedKey || quoteQuery.isFetching;
 
-    return () => clearTimeout(timer);
-  }, [sourceCurrency, destCurrency, sourceAmount, destAmount, amountSide, selectedRail, createQuoteMutation]);
+  const { isExpired } = useCountdown(quote?.expires_at);
+  const refetchQuote = quoteQuery.refetch;
+  const refreshQuote = useCallback(() => {
+    void refetchQuote();
+  }, [refetchQuote]);
 
-  // Swap currencies
-  const handleSwap = useCallback(() => {
-    setSourceCurrency(destCurrency);
-    setDestCurrency(sourceCurrency);
-    setSourceAmount(destAmount);
-    setDestAmount(sourceAmount);
-    setSourceAmountInput(destAmountInput);
-    setDestAmountInput(sourceAmountInput);
-  }, [sourceCurrency, destCurrency, sourceAmount, destAmount, sourceAmountInput, destAmountInput]);
+  const sourceDisplay = side === 'source' ? sourceText : quote ? toInputText(quote.source_amount, sourceExponent) : '';
+  const destinationDisplay =
+    side === 'destination' ? destinationText : quote ? toInputText(quote.destination_amount, destinationExponent) : '';
 
-  // Get available rails for destination currency
-  const destCurrencyInfo = currencies.find(c => c.code === destCurrency);
-  const availableRails = destCurrencyInfo?.payout_rails || [];
-
-  // Handle source amount change
-  const handleSourceAmountChange = (value: number | null) => {
-    setAmountSide('SOURCE');
-    setSourceAmount(value);
-    if (value === null) {
-      setSourceAmountInput('');
-      setDestAmount(null);
-      setDestAmountInput('');
-    } else {
-      const exponent = sourceCurrency ? getExponent(sourceCurrency) : 0;
-      setSourceAmountInput(formatMoney(value, sourceCurrency as Currency));
-    }
+  const canSwap = destinationInfo?.can_send === true;
+  const swap = () => {
+    if (!canSwap) return;
+    setSourceCode(destinationCode);
+    setDestinationCode(sourceCode);
+    setSourceText(side === 'destination' ? destinationText : '');
+    setDestinationText(side === 'source' ? sourceText : '');
+    setSide(side === 'source' ? 'destination' : 'source');
+    setChosenRail('');
   };
 
-  // Handle destination amount change
-  const handleDestAmountChange = (value: number | null) => {
-    setAmountSide('DESTINATION');
-    setDestAmount(value);
-    if (value === null) {
-      setDestAmountInput('');
-      setSourceAmount(null);
-      setSourceAmountInput('');
-    } else {
-      const exponent = destCurrency ? getExponent(destCurrency) : 0;
-      setDestAmountInput(formatMoney(value, destCurrency as Currency));
-    }
-  };
+  const payoutHint = destinationInfo && activeRail
+    ? (() => {
+        const rail = rails.find((r) => r.rail === activeRail);
+        if (!rail || rail.min_payout_minor === null || rail.max_payout_minor === null) return undefined;
+        return `Payouts via ${RAIL_LABELS[activeRail]}: ${toInputText(rail.min_payout_minor, destinationExponent)} to ${toInputText(rail.max_payout_minor, destinationExponent)} ${destinationCode}`;
+      })()
+    : undefined;
 
-  const isReady = userReady && !currenciesLoading && sourceCurrency && destCurrency;
-  const quote = createQuoteMutation.data;
+  const continueEnabled = quote !== undefined && !pending && !isExpired && quoteQuery.isSuccess;
 
   return (
-    <div className="container-safe max-w-md">
-      <h1 className="text-3xl font-bold mb-8 text-center">Send money</h1>
+    <div className="space-y-5">
+      <h1 className="text-3xl font-bold">Send money</h1>
 
-      <form className="space-y-6">
-        {/* Source section */}
-        <div className="card">
-          <div className="card-content space-y-2">
-            <label className="block text-sm font-medium">You send</label>
-            <CurrencySelector
-              currencies={currencies}
-              value={sourceCurrency || ''}
-              onChange={(code: string) => {
-                setSourceCurrency(code as Currency);
-                setQuoteId(null);
-              }}
-              disabled={!isReady}
-              sendable
-            />
-            <MoneyInput
-              value={sourceAmountInput}
-              onChange={handleSourceAmountChange}
-              currency={sourceCurrency as Currency}
-              placeholder="0"
-              disabled={!sourceCurrency}
-            />
-          </div>
-        </div>
+      <section className="card card-content space-y-4" aria-label="Amounts">
+        <CurrencySelect
+          label="You send"
+          currencies={currencies}
+          value={sourceCode}
+          onlySendable
+          onChange={(code) => {
+            setSourceCode(code as Currency);
+            setChosenRail('');
+          }}
+        />
+        <MoneyField
+          label="Amount you send"
+          code={sourceCode}
+          value={sourceDisplay}
+          onChange={(text) => {
+            setSide('source');
+            setSourceText(text);
+          }}
+          disabled={!sourceInfo}
+          error={side === 'source' && typedMinor === null && sourceText !== '' ? `Enter an amount with up to ${sourceExponent} decimals` : undefined}
+        />
 
-        {/* Swap button */}
         <div className="flex justify-center">
           <button
             type="button"
-            onClick={handleSwap}
-            disabled={!sourceCurrency || !destCurrency}
-            className="btn btn-secondary p-2"
+            onClick={swap}
+            disabled={!canSwap}
             aria-label="Swap currencies"
+            className="btn btn-secondary p-2"
           >
-            <ArrowDownUp className="w-5 h-5" />
+            <ArrowDownUp className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
 
-        {/* Destination section */}
-        <div className="card">
-          <div className="card-content space-y-2">
-            <label className="block text-sm font-medium">They receive</label>
-            <CurrencySelector
-              currencies={currencies}
-              value={destCurrency || ''}
-              onChange={(code: string) => {
-                setDestCurrency(code as Currency);
-                setSelectedRail('');
-                setQuoteId(null);
-              }}
-              disabled={!isReady}
-            />
-
-            {/* Rail selector for multi-rail currencies */}
-            {availableRails.length > 1 && (
-              <select
-                value={selectedRail || ''}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-                  setSelectedRail(e.target.value as Rail | '');
-                  setQuoteId(null);
-                }}
-                className="form-input text-sm"
-              >
-                <option value="">Default payment method</option>
-                {availableRails.map((rail) => (
-                  <option key={rail.rail} value={rail.rail}>
-                    {rail.rail.replace(/_/g, ' ')}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            <MoneyInput
-              value={destAmountInput}
-              onChange={handleDestAmountChange}
-              currency={destCurrency as Currency}
-              placeholder="0"
-              disabled={!destCurrency}
-            />
-          </div>
-        </div>
-
-        {/* Error message */}
-        {error && (
-          <div className="flex gap-2 p-3 rounded-lg bg-error-50 dark:bg-error-950 text-error-700 dark:text-error-300">
-            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-            <p className="text-sm">{error}</p>
+        <CurrencySelect
+          label="They receive"
+          currencies={currencies}
+          value={destinationCode}
+          onChange={(code) => {
+            setDestinationCode(code as Currency);
+            setChosenRail('');
+          }}
+        />
+        {rails.length > 1 && (
+          <div className="space-y-1">
+            <label htmlFor="rail" className="block text-sm font-medium">
+              Payout method
+            </label>
+            <select
+              id="rail"
+              value={activeRail ?? ''}
+              onChange={(e) => setChosenRail(e.target.value as Rail)}
+              className="form-input"
+            >
+              {rails.map((r) => (
+                <option key={r.rail} value={r.rail}>
+                  {RAIL_LABELS[r.rail]}
+                </option>
+              ))}
+            </select>
           </div>
         )}
+        <MoneyField
+          label="Amount they receive"
+          code={destinationCode}
+          value={destinationDisplay}
+          onChange={(text) => {
+            setSide('destination');
+            setDestinationText(text);
+          }}
+          disabled={!destinationInfo}
+          hint={payoutHint}
+          error={
+            side === 'destination' && typedMinor === null && destinationText !== ''
+              ? `Enter an amount with up to ${destinationExponent} decimals`
+              : undefined
+          }
+          helper={
+            quote && !quote.payout_amount_guaranteed ? (
+              <p className="text-xs text-muted">Estimated: the payout partner converts at its own rate.</p>
+            ) : null
+          }
+        />
+      </section>
 
-        {/* Quote card */}
+      <div aria-live="polite" className="space-y-3">
+        {quoteQuery.isError && (
+          <p role="alert" className="rounded-lg bg-error-50 px-3 py-2 text-sm text-error-700 dark:bg-error-950 dark:text-error-200">
+            {quoteQuery.error.message}
+          </p>
+        )}
         {quote && (
           <QuoteCard
             quote={quote}
-            currencies={currencies}
-            isLoading={createQuoteMutation.isPending}
-            onRefresh={() => setQuoteId(null)}
+            sourceExponent={sourceExponent}
+            destinationExponent={destinationExponent}
+            onExpired={refreshQuote}
           />
         )}
+        {quoteQuery.isFetching && !quote && <p className="text-sm text-muted">Getting your rate…</p>}
+      </div>
 
-        {/* Continue button */}
-        <button
-          type="button"
-          onClick={() => {
-            if (quote && sourceCurrency && destCurrency && sourceAmount !== null && destAmount !== null) {
-              onContinue(quote.id, sourceCurrency, destCurrency, sourceAmount, destAmount, selectedRail);
-            }
-          }}
-          disabled={!quote || createQuoteMutation.isPending}
-          className="btn btn-primary w-full"
-        >
-          {createQuoteMutation.isPending ? 'Getting quote...' : 'Continue to payment'}
-        </button>
-      </form>
+      <button
+        type="button"
+        onClick={() => quote && activeRail && onContinue(quote, activeRail)}
+        disabled={!continueEnabled || !activeRail}
+        className="btn btn-primary w-full py-3 text-base"
+      >
+        Continue
+      </button>
     </div>
   );
 }

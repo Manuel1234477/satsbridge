@@ -1,55 +1,35 @@
-import { PaymentStatus } from './api/schemas';
+import type { PaymentDetails, PaymentStatus } from './api/schemas';
 
-export interface PaymentStep {
-  key: 'payment' | 'converting' | 'paying' | 'delivered';
-  label: string;
-  description: string;
-}
+export const TRACKER_STEPS = ['received', 'converting', 'paying', 'delivered'] as const;
+export type TrackerStep = (typeof TRACKER_STEPS)[number];
 
-const STEPS: PaymentStep[] = [
-  { key: 'payment', label: 'Payment received', description: 'We received your Lightning payment' },
-  { key: 'converting', label: 'Converting', description: 'Converting to local currency' },
-  { key: 'paying', label: 'Paying recipient', description: 'Sending money to the recipient' },
-  { key: 'delivered', label: 'Delivered', description: 'Payment complete' },
-];
-
-export function mapStatusToStep(status: PaymentStatus): PaymentStep | null {
+// Index of the step in progress for a payment on the happy path.
+// Null for statuses that are not on the path (not yet paid, expired, failed, refunds).
+export function activeStepIndex(status: PaymentStatus): number | null {
   switch (status) {
-    case 'AWAITING_PAYMENT':
     case 'PAYMENT_DETECTED':
+      return 0;
     case 'SETTLED':
-      return STEPS[0];
+      return 1;
     case 'PAYOUT_PENDING':
-      return STEPS[1];
+      return 2;
     case 'COMPLETED':
-      return STEPS[3];
+      return 3;
     default:
       return null;
   }
 }
 
-export function getCompletedSteps(status: PaymentStatus): (PaymentStep['key'])[] {
-  switch (status) {
-    case 'COMPLETED':
-      return ['payment', 'converting', 'paying', 'delivered'];
-    case 'PAYOUT_PENDING':
-      return ['payment', 'converting', 'paying'];
-    case 'SETTLED':
-      return ['payment', 'converting'];
-    case 'PAYMENT_DETECTED':
-      return ['payment'];
-    default:
-      return [];
-  }
+export function isReversal(payment: PaymentDetails): boolean {
+  return payment.status === 'FAILED' && payment.payout?.status === 'reversed';
 }
 
-export const TERMINAL_STATUSES: PaymentStatus[] = [
-  'COMPLETED',
-  'EXPIRED',
-  'FAILED',
-  'REFUNDED',
-];
+// Polling stops on these. COMPLETED keeps a slow poll elsewhere so a later reversal is seen.
+export const STOP_POLLING_STATUSES: readonly PaymentStatus[] = ['EXPIRED', 'REFUNDED'];
 
-export function isTerminalStatus(status: PaymentStatus): boolean {
-  return TERMINAL_STATUSES.includes(status);
+export function pollIntervalMs(status: PaymentStatus | undefined): number | false {
+  if (!status) return 3000;
+  if (STOP_POLLING_STATUSES.includes(status)) return false;
+  if (status === 'COMPLETED') return 30_000;
+  return 3000;
 }

@@ -1,39 +1,51 @@
 'use client';
 
 import { useState } from 'react';
+import type { RecipientDraft } from './types';
 
 interface LightningAddressRecipientProps {
-  onSubmit: (address: string) => void;
+  onConfirm: (draft: RecipientDraft) => void;
 }
 
-export function LightningAddressRecipient({ onSubmit }: LightningAddressRecipientProps) {
-  const [address, setAddress] = useState('');
+const ADDRESS = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-  const isValid = address.includes('@') && address.split('@').length === 2;
+export function LightningAddressRecipient({ onConfirm }: LightningAddressRecipientProps) {
+  const [address, setAddress] = useState('');
+  const valid = ADDRESS.test(address.trim());
 
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <label className="block text-sm font-medium">Lightning address</label>
+        <label htmlFor="ln-address" className="block text-sm font-medium">
+          Lightning Address
+        </label>
         <input
-          type="email"
-          placeholder="name@example.com"
+          id="ln-address"
+          type="text"
+          autoComplete="off"
+          placeholder="name@wallet.example"
           value={address}
           onChange={(e) => setAddress(e.target.value)}
           className="form-input"
+          aria-describedby="ln-hint"
         />
-        <p className="text-xs text-muted">
-          The recipient receives their own provider's rate. Amount shown is an estimate.
+        <p id="ln-hint" className="text-xs text-muted">
+          This is paid to the recipient&rsquo;s own wallet provider, which converts at its own rate. The amount shown is an estimate.
         </p>
       </div>
-
       <button
         type="button"
-        onClick={() => onSubmit(address)}
-        disabled={!isValid}
+        disabled={!valid}
+        onClick={() =>
+          onConfirm({
+            recipient: { rail: 'LIGHTNING_ADDRESS', address: address.trim().toLowerCase() },
+            displayName: null,
+            summary: address.trim().toLowerCase(),
+          })
+        }
         className="btn btn-primary w-full"
       >
-        Continue with this address
+        Use this address
       </button>
     </div>
   );

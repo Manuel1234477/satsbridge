@@ -1,38 +1,37 @@
-import { Currency } from './api/schemas';
+// All amounts are integer minor units. The exponent comes from GET /currencies.
+// Parsing and formatting use integer/string arithmetic only; no float math touches money.
 
-const currencyExponents: Record<Currency, number> = {
-  XOF: 0,
-  XAF: 0,
-  GNF: 0,
-  KES: 2,
-  NGN: 2,
-};
-
-export function getExponent(currency: Currency): number {
-  return currencyExponents[currency] ?? 0;
+export function formatMinor(minor: number, exponent: number): string {
+  const negative = minor < 0;
+  const digits = Math.abs(minor).toString().padStart(exponent + 1, '0');
+  const whole = exponent === 0 ? digits : digits.slice(0, digits.length - exponent);
+  const fraction = exponent === 0 ? '' : digits.slice(digits.length - exponent);
+  const grouped = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Number(whole));
+  return `${negative ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''}`;
 }
 
-export function formatMoney(amount: number, currency: Currency): string {
-  const exponent = getExponent(currency);
-  const formatter = new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: exponent,
-    maximumFractionDigits: exponent,
-    useGrouping: true,
-  });
-  const value = amount / Math.pow(10, exponent);
-  return formatter.format(value);
+export function formatWithCode(minor: number, exponent: number, code: string): string {
+  return `${formatMinor(minor, exponent)} ${code}`;
 }
 
-export function formatMoneyWithCurrency(amount: number, currency: Currency): string {
-  return `${formatMoney(amount, currency)} ${currency}`;
+// Parses user input such as "1000", "1,000" or "10.50" into minor units.
+// Returns null for empty, malformed, or over-precise input (more decimals than the currency has).
+export function parseMinor(input: string, exponent: number): number | null {
+  const cleaned = input.replace(/[\s,]/g, '').trim();
+  if (cleaned === '') return null;
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(cleaned);
+  if (!match) return null;
+  const whole = match[1];
+  const fraction = match[2] ?? '';
+  if (fraction.length > exponent) return null;
+  const padded = fraction.padEnd(exponent, '0');
+  const minor = Number(`${whole}${padded}`);
+  return Number.isSafeInteger(minor) ? minor : null;
 }
 
-export function parseMoneyInput(input: string, exponent: number): number | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  const num = parseFloat(trimmed);
-  if (isNaN(num)) return null;
-
-  return Math.round(num * Math.pow(10, exponent));
+// Editable text for a minor amount, e.g. 1050 at exponent 2 -> "10.50".
+export function toInputText(minor: number, exponent: number): string {
+  if (exponent === 0) return minor.toString();
+  const digits = minor.toString().padStart(exponent + 1, '0');
+  return `${digits.slice(0, digits.length - exponent)}.${digits.slice(digits.length - exponent)}`;
 }
