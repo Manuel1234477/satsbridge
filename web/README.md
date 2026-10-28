@@ -1,107 +1,134 @@
-# SatsBridge Frontend
+# SatsBridge frontend
 
-A Next.js frontend for SatsBridge, a cross-border payments app for African currencies, settled over Bitcoin's Lightning Network.
+Sender web app for SatsBridge: pick a currency pair, get a live quote, confirm the recipient, pay a Lightning invoice, and follow the payment to receipt. Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4, TanStack Query and Zod.
 
-**Status:** ✅ MVP complete — XOF ↔ NGN (bank + Lightning) and KES flows working end-to-end.
+**Status:** hackathon MVP, demo only. No real money is moved. This is a technical demonstration and not a licensed financial service.
+
+## What is built and verified
+
+| Area | Built | Verified by |
+|---|---|---|
+| Send screen: live quotes (400 ms debounce), amount in either field, swap, payout method selector, quote countdown, auto-refresh on expiry, continue blocked on an expired quote | Yes | Browser test (happy path) |
+| NGN bank recipient: bank search, 10-digit account, resolve, "Confirm account holder" step, resolution cleared when bank or account changes | Yes | Browser test (happy path) |
+| Lightning Address and KES M-Pesa recipient forms | Yes | Not run in a browser |
+| Review, then `POST /payments`, then `POST /payments/{id}/pay`. A failed `/pay` retries on the same payment, never a second one | Yes | Browser test (happy path) |
+| Payment page: QR (`lightning:` URI), copy invoice, open in wallet, copy LNURL, invoice countdown, polling every 3 s (stops on EXPIRED/REFUNDED; COMPLETED polled every 30 s to catch reversals) | Yes | Browser tests |
+| Tracker (received, converting, paying, delivered), raw status in Details, event timeline | Yes | Browser tests |
+| Receipt on COMPLETED, "Download receipt" via `window.print()` | Yes (no print stylesheet) | Browser test checks the heading and masked account |
+| Refund: REFUND_PENDING prompt for an invoice for exactly `amount_sats`, `ln` prefix check, server's amount message shown, REFUNDED with `refunded_at` and `refund_sats` | Yes | Browser test |
+| Reversal: COMPLETED that becomes FAILED with payout `reversed` shows "Payment reversed"; refund path as above | Yes | Browser test |
+| Expired invoice: explanation and "Start a new quote" (prefills amounts only) | Yes | Not run in a browser |
+| Failed payout (FAILED without reversal) | Yes | Browser test (refund path) |
+| Dev "Simulate payout" panel (`NEXT_PUBLIC_DEV_TOOLS=true`, mock provider only) | Yes | Not run in a browser |
+| History: list from `/transactions`, status badges, empty and error states | Yes | Not run in a browser |
+| API client: Zod validation of every response, error mapping for all backend codes, one retry after 401 with a fresh anonymous user | Yes | Vitest (error mapping, mock payloads) |
+| Money: integer minor units, exponents from `GET /currencies`, parse and format without floats | Yes | Vitest (9 tests) |
+| Mock API mode (`NEXT_PUBLIC_MOCK_API=true`): same routes and shapes, time-derived status progression, magic values for failure, reversal, expiry and expired quote | Yes | Vitest (mock contract), Playwright |
+| Disclaimer banner ("Demo mode", dismissable) | Yes | Visual check not done |
+
+Unit tests: 22 Vitest tests (money, status-to-step mapping, error mapping, mock contract). Browser tests: 3 Playwright tests in Chrome, all against mock mode.
+
+## What is not built or not verified
+
+- **Real backend end to end: not run.** The backend needs LNbits. Nothing in the real-backend path was exercised in this work. Only the mock was tested in a browser.
+- **Internationalization (English and French, language toggle): not built.** All strings are hardcoded English. There is no `src/i18n` directory.
+- **Accessibility audit: not done.** Focus styles and labels are in place, but there was no axe run and no keyboard-only pass.
+- **360 px, light and dark visual checks: not done.** Dark mode follows `prefers-color-scheme` only; there is no manual toggle. Layouts were not screenshotted.
+- **shadcn/ui and React Hook Form: not used.** Forms are plain React state with inline validation.
+- **Recipient prefill on "Start a new quote": not done.** The backend never returns the account, and the frontend must not store it, so only amounts and currencies are prefilled.
+- **Refund invoice amount is not checked in the browser.** The backend checks that it matches `amount_sats` exactly and returns its message.
+- **Offline UI: not built.** Network failures map to an "offline" message in the same error panels; there is no dedicated offline state.
+- **Lightning Address and KES flows, expired-invoice path, history page, dev panel: no browser tests.**
+- **Receipt is print-to-PDF via `window.print()` only,** with no print stylesheet.
+- **Not in CI.** No pipeline runs these checks.
 
 ## Setup
 
 ```bash
 cd frontend
-cp .env.example .env.local
-npm install
-npm run dev
+cp .env.example .env.local   # then adjust
+npm install --legacy-peer-deps
+npm run dev                  # http://localhost:3000
 ```
 
-Visit `http://localhost:3000` (backend must be running on `http://localhost:8080/api/v1`).
+`--legacy-peer-deps` is needed because `@testing-library/react` 14 declares a React 18 peer.
 
-## Environment variables
+### Environment variables
 
-- `NEXT_PUBLIC_API_URL`: Backend API URL (default: `http://localhost:8080/api/v1`)
-- `NEXT_PUBLIC_DEV_TOOLS`: Show dev-only UI (mock payout controls) (default: `false`)
-- `NEXT_PUBLIC_MOCK_API`: Use mock API instead of real backend (default: `false`)
+| Variable | Default | Meaning |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8080/api/v1` | Backend base URL |
+| `NEXT_PUBLIC_MOCK_API` | `false` | `true` serves every request from the in-browser mock. No backend or LNbits needed |
+| `NEXT_PUBLIC_MOCK_TIME_SCALE` | `1` | Mock only. Multiplies every mock timing; `0.2` runs five times faster |
+| `NEXT_PUBLIC_DEV_TOOLS` | `false` | Shows the "Dev: simulate payout" panel on mock payouts |
 
-## Running against the backend
+Build-time variables: Next inlines `NEXT_PUBLIC_*` values, so restart the dev server after changing them.
 
-1. Start the backend: `cd backend && cargo run` (ensure `LNBITS_URL` is set in `.env`)
-2. Start the frontend: `npm run dev`
-
-## Features
-
-### Core Flow
-1. **Send** - Currency pair, amount, live quote (400ms debounce) with countdown and auto-refresh
-2. **Recipient** - NGN bank (searchable picker + account resolution), Lightning Address, or KES M-Pesa
-3. **Review** - Summary with recipient confirmation (required)
-4. **Pay** - QR code, invoice copy, sats + fiat display, open-in-wallet link
-5. **Track** - Real-time status polling, completion screen with amounts
-
-### Additional
-- **History** - Transaction list with status badges, click-through to receipts
-- **Status display** - AWAITING_PAYMENT, PAYMENT_DETECTED, SETTLED, PAYOUT_PENDING, COMPLETED, FAILED, EXPIRED
-- **Design** - Mobile-first, dark mode, WCAG AA, keyboard navigation, `prefers-reduced-motion` respected
-- **Disclaimer** - Dismissable "demo mode" banner
-
-## Mock API mode (Coming Soon)
-
-To test without the real backend or LNbits:
+## Running against the real backend
 
 ```bash
-NEXT_PUBLIC_MOCK_API=true npm run dev
+cd ../backend
+cp .env.example .env         # set LNBITS_URL and LNBITS_INVOICE_KEY
+cargo run                    # serves http://localhost:8080
 ```
 
-This uses MSW (Mock Service Worker) to intercept API calls and simulate the full payment flow, including status transitions.
+Then run the frontend with `NEXT_PUBLIC_MOCK_API=false`. The backend's `.env.example` already allows `http://localhost:3000` via `CORS_ALLOWED_ORIGINS`.
+
+## Mock mode
+
+`NEXT_PUBLIC_MOCK_API=true npm run dev` answers the same routes with the same JSON shapes; the same Zod schemas validate them. Payment progress is computed from timestamps, so reloading keeps the state. State is stored in `localStorage` under `satsbridge.mock.v1`.
+
+Magic values (bank account numbers and amounts):
+
+| Input | Result |
+|---|---|
+| Any valid 10-digit account, bank GTBank | Paid, delivered, receipt |
+| Account ending `0000` | Payout fails, refund needed, refund to REFUNDED |
+| Account ending `1111` | Delivered, then reversed; refund needed |
+| Account ending `2222` | Invoice never paid, expires |
+| Account ending `9999` | Account check fails (`recipient_not_found`) |
+| Source amount `777` | Quote expires after 5 seconds (scaled by time scale) |
+
+Refunds in mock mode check the BOLT11 amount, as the backend does: `lnbc<sats×10>n1…` is exact; any other amount is rejected with the server's message.
 
 ## Scripts
 
-- `npm run dev` - Start dev server on port 3000
-- `npm run build` - Build for production
-- `npm run lint` - Run ESLint (must pass with zero warnings)
-- `npm run typecheck` - Run TypeScript type checking (strict mode)
-- `npm test` - Run tests with Vitest
+| Command | What it does |
+|---|---|
+| `npm run dev` | Dev server on port 3000 |
+| `npm run build` | Production build |
+| `npm run typecheck` | `tsc --noEmit` (strict) |
+| `npm run lint` | ESLint CLI, `--max-warnings 0` |
+| `npm test` | Vitest, once with `npm test -- --run` |
+| `npm run e2e` | Playwright; starts its own mock dev server on port 3100 |
 
-All scripts must pass before commit.
+Playwright uses the system Chrome at `/usr/bin/google-chrome`. Set `PLAYWRIGHT_CHROME_PATH` to use another binary.
 
-## Architecture
+The demo script is in [`../docs/demo-script.md`](../docs/demo-script.md).
+
+## Layout
 
 ```
 src/
-  app/                    - Routes: / (send), /history, /payments/[id]
-  components/             - UI: CurrencySelector, MoneyInput, QuoteCard, QrCode, Disclaimer
+  app/                 routes: / (send, ?from=<id> to prefill), /payments/[id], /history
+  components/          MoneyField, CurrencySelect, QuoteCard, LightningQr, Disclaimer
   features/
-    send/                 - SendPage, SendWizard, ReviewPage
-    recipient/            - NgBankRecipient, LightningAddressRecipient, KePhoneRecipient
-    payment/              - PaymentQr
+    send/              SendPage, ReviewPage, SendWizard
+    recipient/         NgBankRecipient, LightningAddressRecipient, KePhoneRecipient
+    payment/           PaymentView (every status), refund, dev panel
+    history/           HistoryList
+  hooks/               useQuotePreview, usePaymentDetails, useCountdown, useDebounced, ...
   lib/
-    api/                  - Client, schemas (Zod), error mapping
-    money.ts              - Format/parse with exponent
-    payment-status.ts     - Status → UI step mapping
-  hooks/                  - useUser, useCurrencies, useQuote, usePayment, useCountdown, useRecipientResolution
-  styles/globals.css      - Design tokens (calm fintech palette)
+    api/               client (auth, retry), schemas (Zod), index (endpoints), errors, mock
+    money.ts           exact integer money formatting and parsing
+    payment-status.ts  status to tracker step, polling interval
+    rails.ts           payout method labels
+e2e/                   Playwright specs and helpers
 ```
 
-**No server routes, no database:** Client drives all state via TanStack Query + backend API.
+## Design notes
 
-## Key libraries
-
-- **Next.js 16** (App Router, Turbopack) - Framework
-- **TypeScript (strict mode)** - 100% type coverage
-- **Tailwind CSS + @tailwindcss/forms** - Styling + design tokens
-- **TanStack Query** - Server state, polling (3s for payments)
-- **Zod** - Runtime validation of all API responses
-- **React Hook Form** - Form state (ready for forms)
-- **Lucide React** - Icons
-- **qrcode.react** - Lightning QR codes
-- **MSW** - Mock API (infrastructure ready)
-
-## Design
-
-- Mobile-first (390px breakpoint)
-- Dark mode support
-- Calm, trustworthy fintech aesthetic
-- WCAG AA contrast
-- Full keyboard navigation
-- Respects `prefers-reduced-motion`
-
-## Disclaimer
-
-This is a technical demonstration. It is not a licensed financial service. See the backend README for the full disclaimer.
+- The client never computes money. It displays server amounts; the only arithmetic is formatting and a display countdown.
+- The sender cannot submit `POST /payments` on an expired quote. The UI blocks it and asks them to go back for a fresh rate.
+- The token is kept in `localStorage` and sent as a Bearer header, never in a URL. A 401 clears it, creates a new anonymous user, and retries once.
+- Account numbers are kept in component memory only until payment is created, and are shown masked afterwards.
