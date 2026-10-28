@@ -3,6 +3,7 @@ name = "satsbridge"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
+default-run = "satsbridge"
 description = "Bitcoin/Lightning-settled cross-border payments across African currencies"
 license = "MIT"
 
@@ -11,6 +12,7 @@ anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"
 bech32 = "0.11"
+bitcoin = "0.32"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 hex = "0.4"
@@ -31,6 +33,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-bitcoin = "0.32"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
