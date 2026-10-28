@@ -14,9 +14,9 @@ export function LightningAddressRecipient({ onConfirm }: LightningAddressRecipie
   const valid = ADDRESS.test(address.trim());
 
   return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <label htmlFor="ln-address" className="block text-sm font-medium">
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="ln-address" className="label">
           Lightning Address
         </label>
         <input
@@ -26,10 +26,10 @@ export function LightningAddressRecipient({ onConfirm }: LightningAddressRecipie
           placeholder="name@wallet.example"
           value={address}
           onChange={(e) => setAddress(e.target.value)}
-          className="form-input"
+          className="field"
           aria-describedby="ln-hint"
         />
-        <p id="ln-hint" className="text-xs text-muted">
+        <p id="ln-hint" className="label">
           This is paid to the recipient&rsquo;s own wallet provider, which converts at its own rate. The amount shown is an estimate.
         </p>
       </div>
@@ -43,7 +43,7 @@ export function LightningAddressRecipient({ onConfirm }: LightningAddressRecipie
             summary: address.trim().toLowerCase(),
           })
         }
-        className="btn btn-primary w-full"
+        className="btn btn-accent btn-block"
       >
         Use this address
       </button>

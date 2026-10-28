@@ -8,19 +8,18 @@ test('XOF to NGN bank transfer: quote, verify account, pay, and receive a receip
 
   const destination = page.getByLabel('Amount they receive');
   await expect(destination).not.toHaveValue('', { timeout: 15_000 });
-  await expect(page.getByText(/Quote expires in \d+s/)).toBeVisible();
+  await expect(page.getByText(/Expires in \d+s/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Who is receiving this?' })).toBeVisible();
 
-  const bankList = page.getByLabel('Bank list');
-  await expect(bankList.locator('option', { hasText: 'GTBank' })).toBeAttached({ timeout: 15_000 });
-  await bankList.selectOption({ label: 'GTBank' });
+  await page.getByRole('button', { name: 'Choose bank' }).click();
+  await page.getByRole('option', { name: 'GTBank' }).click();
   await page.getByLabel('Account number (10 digits)').fill('0123456789');
   await page.getByRole('button', { name: 'Check account' }).click();
 
   await expect(page.getByRole('heading', { name: 'Confirm account holder' })).toBeVisible();
-  await page.getByRole('button', { name: 'Yes, this is the account holder' }).click();
+  await page.getByRole('button', { name: 'Yes, this is correct' }).click();
 
   await expect(page.getByRole('heading', { name: 'Review and pay' })).toBeVisible();
   await page.getByRole('button', { name: 'Confirm and continue' }).click();

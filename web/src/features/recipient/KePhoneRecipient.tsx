@@ -21,9 +21,9 @@ export function KePhoneRecipient({ onConfirm }: KePhoneRecipientProps) {
   const normalized = normalize(phone);
 
   return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <label htmlFor="ke-phone" className="block text-sm font-medium">
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="ke-phone" className="label">
           M-Pesa phone number
         </label>
         <input
@@ -34,10 +34,10 @@ export function KePhoneRecipient({ onConfirm }: KePhoneRecipientProps) {
           placeholder="0712 345 678"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          className="form-input font-mono"
+          className="field money text-[22px]"
           aria-describedby="ke-hint"
         />
-        <p id="ke-hint" className="text-xs text-muted">
+        <p id="ke-hint" className="label">
           Kenyan number: 07 or 01 followed by 8 digits, or +254.
         </p>
       </div>
@@ -52,7 +52,7 @@ export function KePhoneRecipient({ onConfirm }: KePhoneRecipientProps) {
             summary: `M-Pesa · ${maskTail(normalized)}`,
           })
         }
-        className="btn btn-primary w-full"
+        className="btn btn-accent btn-block"
       >
         Use this number
       </button>
