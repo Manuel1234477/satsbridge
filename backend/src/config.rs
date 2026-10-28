@@ -92,40 +92,24 @@ impl FxConfig {
 
 #[derive(Clone)]
 pub struct LightningConfig {
-    /// `None` uses the mock node.
-    pub lnbits: Option<LnbitsConfig>,
-    /// Settlement watcher interval; 0 disables it.
+    pub lnbits: LnbitsConfig,
+    /// Settlement watcher interval in seconds; 0 disables it (only allowed with a webhook URL).
     pub poll_secs: u64,
 }
 
 impl LightningConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let lnbits = match env::var("LIGHTNING_PROVIDER")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "" | "mock" => None,
-            "lnbits" => Some(LnbitsConfig {
-                base_url: required("LNBITS_URL")?,
-                invoice_key: required("LNBITS_INVOICE_KEY")?,
-                admin_key: env::var("LNBITS_ADMIN_KEY").ok().filter(|k| !k.is_empty()),
-                webhook_url: env::var("LNBITS_WEBHOOK_URL").ok().filter(|u| !u.is_empty()),
-            }),
-            other => bail!("unknown LIGHTNING_PROVIDER {other:?} (expected mock or lnbits)"),
+        let lnbits = LnbitsConfig {
+            base_url: required("LNBITS_URL")?,
+            invoice_key: required("LNBITS_INVOICE_KEY")?,
+            admin_key: env::var("LNBITS_ADMIN_KEY").ok().filter(|k| !k.is_empty()),
+            webhook_url: env::var("LNBITS_WEBHOOK_URL").ok().filter(|u| !u.is_empty()),
         };
-        Ok(Self {
-            lnbits,
-            poll_secs: parse_or("LIGHTNING_POLL_SECS", 5)?,
-        })
-    }
-
-    pub fn mock() -> Self {
-        Self {
-            lnbits: None,
-            poll_secs: 0,
+        let poll_secs = parse_or("LIGHTNING_POLL_SECS", 5)?;
+        if poll_secs == 0 && lnbits.webhook_url.is_none() {
+            bail!("LIGHTNING_POLL_SECS=0 needs LNBITS_WEBHOOK_URL, or no payment would ever settle");
         }
+        Ok(Self { lnbits, poll_secs })
     }
 }
 
@@ -202,7 +186,6 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub database_url: String,
     pub api_key: Option<String>,
-    pub lightning_webhook_secret: String,
     pub provider_webhook_secret: String,
     pub quote_ttl_secs: i64,
     pub invoice_expiry_secs: i64,
@@ -221,7 +204,6 @@ impl Config {
             bind_addr: parse_or("BIND_ADDR", "0.0.0.0:8080".parse()?)?,
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://satsbridge.db".into()),
             api_key: env::var("API_KEY").ok().filter(|k| !k.is_empty()),
-            lightning_webhook_secret: required("LIGHTNING_WEBHOOK_SECRET")?,
             provider_webhook_secret: required("PROVIDER_WEBHOOK_SECRET")?,
             quote_ttl_secs: parse_or("QUOTE_TTL_SECS", 120)?,
             invoice_expiry_secs: parse_or("INVOICE_EXPIRY_SECS", 600)?,

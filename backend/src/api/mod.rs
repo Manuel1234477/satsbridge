@@ -43,7 +43,6 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/currencies", get(currencies::list))
         .route("/payout-institutions", get(recipients::institutions))
-        .route("/webhooks/lightning", post(webhooks::lightning))
         .route("/webhooks/provider", post(webhooks::provider))
         .route("/webhooks/bitnob", post(webhooks::bitnob))
         .route("/webhooks/lnbits", post(webhooks::lnbits));

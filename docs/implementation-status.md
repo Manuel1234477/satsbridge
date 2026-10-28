@@ -2,21 +2,21 @@
 
 **As of:** 2026-10-21
 **Scope:** Backend only (`backend/`). The frontend has not been started.
-**Build:** compiles with no warnings, clippy clean, 40 automated tests passing (`cargo test`).
+**Build:** compiles with no warnings, clippy clean, 44 automated tests passing (`cargo test`), plus 2 opt-in live tests.
 **Related docs:** PRD v1.0 · [NGN payout addendum](prd-addendum-ngn-payout.md) · [backend README](../backend/README.md) (setup, API, demo script)
 
 ---
 
 ## 1. Summary
 
-The backend implements the full PRD payment lifecycle: quote → payment intent → Lightning invoice → settlement → local payout → completed, with a timestamped audit trail. Every external system sits behind an adapter interface. Each one has a mock for offline demos, and the real integrations below are built:
+The backend implements the full PRD payment lifecycle: quote → payment intent → Lightning invoice → settlement → local payout → completed, with a timestamped audit trail. Every external system sits behind an adapter interface. Lightning is always real (LNbits). Payout providers also have mocks for demos. The integrations:
 
 | Integration | Status | Used for |
 |---|---|---|
 | Coinbase exchange rates | **Live**, verified against the real API | BTC price per currency (primary) |
 | CoinGecko simple price | **Live**, verified against the real API | BTC price per currency (fallback) |
-| LNbits | **Built**, tested against a fake LNbits server; not yet run against a real wallet | Receiving sender payments; paying Lightning Addresses |
-| Bitnob payouts | **Built** from Bitnob's OpenAPI spec, tested against a fake server; needs Bitnob API keys | NGN bank transfers |
+| LNbits | **Verified against a real LNbits server** (v1.x, test funding source): invoices, settlement by watcher and by webhook, outgoing payment, idempotent retry. Not yet run with real funds | Receiving sender payments; paying Lightning Addresses |
+| Bitnob payouts | **Built** from Bitnob's OpenAPI spec, tested against a fake server. Client ID received; needs the client secret to run the live check | NGN bank transfers |
 | Tapnob (Lightning Address) | **Built**; address lookup verified against real `tapnob.io` | NGN via the recipient's Tapnob account |
 | Tando | **Mock only** | KES / M-Pesa |
 
@@ -29,7 +29,7 @@ flowchart LR
     Q --> FX[FX chain: Coinbase → CoinGecko → static]
     API --> P[Payment service + state machine]
     P --> DB[(SQLite)]
-    P --> LN[Lightning adapter: LNbits / mock]
+    P --> LN[Lightning adapter: LNbits]
     LN -. webhook hint .-> API
     W[Settlement watcher] -->|poll invoice status| LN
     W --> P
@@ -52,7 +52,7 @@ flowchart LR
 | FR-02 | Amount entry (source or destination) | ✅ | `amount_side: source \| destination` |
 | FR-03 | Quote engine | ✅ | Rate, fee (in sats and in the sender's currency), recipient amount, expiry; `rate_source` and `rate_as_of` recorded |
 | FR-04 | Payment creation | ✅ | One payment per quote, enforced by a database constraint |
-| FR-05 | Lightning settlement | ✅ | LNbits invoices; settlement confirmed by the watcher or a webhook, always checked against the node |
+| FR-05 | Lightning settlement | ✅ | LNbits invoices; settlement only when LNbits reports the invoice paid (watcher or webhook). Verified on a real LNbits server |
 | FR-06 | LNURL | 🟡 Partial | We **pay** LNURL-pay / Lightning Addresses (Tapnob). We don't yet **serve** LNURL-pay to senders |
 | FR-07 | Payout after settlement | ✅ | Exactly one payout request per payment |
 | FR-08 | Status tracking | ✅ | `GET /payments/{id}` returns status, invoice, payout and audit events |
@@ -103,7 +103,12 @@ CREATED → QUOTED → AWAITING_PAYMENT → SETTLED → PAYOUT_PENDING → COMPL
 
 ### LNbits (Lightning)
 - **Keys:** the invoice key creates invoices and reads their status. The admin key pays invoices and is only needed for Tapnob payouts.
-- **Webhooks:** LNbits's invoice webhook is **unsigned**, and LNbits won't call private or localhost addresses. So settlement is always confirmed with `GET /api/v1/payments/{hash}`, and a background watcher polls unpaid invoices (`LIGHTNING_POLL_SECS`, default 5 s).
+- **Startup check:** each key is checked with `GET /api/v1/wallet`, and SatsBridge won't start if one fails.
+- **Webhooks:** LNbits's invoice webhook is **unsigned**, and it posts the payment as a JSON-encoded string. So settlement is always confirmed with `GET /api/v1/payments/{hash}`, and a background watcher polls unpaid invoices (`LIGHTNING_POLL_SECS`, default 5 s).
+- **Webhook URL rules:** LNbits only accepts callback URLs on domain names by default. If it rejects `LNBITS_WEBHOOK_URL`, the invoice is created without it.
+- **No fake settlement:** there is no shared-secret Lightning webhook and no dev settle route.
+- **Invoice parsing:** invoices LNbits issues may lack the BOLT11 feature field. We verify signature, hash, amount, description hash and expiry ourselves instead of using `lightning-invoice`'s strict check, which rejects them.
+- **Retries:** retrying payment of an already-paid invoice returns the existing payment and moves no money (verified live).
 - **Fees:** LNbits has no per-payment fee cap; its own fee reserve applies.
 
 ### Bitnob (NGN bank transfer)
@@ -121,7 +126,8 @@ CREATED → QUOTED → AWAITING_PAYMENT → SETTLED → PAYOUT_PENDING → COMPL
 
 ## 6. Security
 
-- **Webhooks:** each webhook is checked with its own method. Our generic webhooks use HMAC-SHA256. Bitnob's use HMAC-SHA512. LNbits webhooks are confirmed by asking LNbits for the payment status.
+- **Webhooks:** each webhook is checked with its own method. The generic provider webhook uses HMAC-SHA256. Bitnob's uses HMAC-SHA512. LNbits webhooks are confirmed by asking LNbits for the payment status.
+- **Settlement:** nothing can mark a payment paid except LNbits itself. The dev simulator only works for mock payout providers.
 - **Replays:** webhook replays are blocked by de-duplicating on `(source, event_id)`.
 - **API key:** an optional bearer API key protects the non-public endpoints, and it is compared in constant time.
 - **Personal data:** full recipient details are never returned by the API. Account numbers are masked in responses and stored hashed for resolution checks.
@@ -147,12 +153,12 @@ All settings are in `backend/.env.example`. The main switches:
 | Variable | Values | Default |
 |---|---|---|
 | `FX_PROVIDERS` | `coinbase,coingecko[,static]` | `coinbase,coingecko` |
-| `LIGHTNING_PROVIDER` | `mock` \| `lnbits` | `mock` |
+| `LNBITS_URL`, `LNBITS_INVOICE_KEY` | LNbits instance and receive key | **required** |
 | `NGN_BANK_PROVIDER` | `mock` \| `bitnob` | `mock` |
 | `TAPNOB_DOMAINS` | comma list; empty disables | `tapnob.io` |
 | `DEV_ROUTES` | simulation endpoints for demos | `false` |
 
-## 9. Tests (40)
+## 9. Tests (44 + 2 live)
 
 - **Domain:** state-machine transitions, money rounding, recipient parsing and masking.
 - **Quotes:** source and destination math, fee floor, limits, expiry.
@@ -161,8 +167,10 @@ All settings are in `backend/.env.example`. The main switches:
   - invoice creation and status
   - immediate, pending-then-paid, and failed payments
   - missing admin key
+  - webhook-URL rejection fallback
   - double-encoded webhook bodies
-- **Bitnob** (fake server that checks signatures): account lookup, quote → initialize → finalize, rejection of bad credentials, webhook mapping.
+- **BOLT11 decoding:** a real LNbits invoice without feature bits, garbage and tampered invoices.
+- **Bitnob** (fake server that checks signatures): whoami, account lookup, quote → initialize → finalize, rejection of bad credentials, webhook mapping.
 - **Tapnob** (fake LNURL server): lookup and payment, unknown user, foreign domain, invoice amount and metadata checks, subdomain allowlist.
 - **End to end** (through the router):
   - XOF → NGN with exactly one payout under replayed webhooks
@@ -172,15 +180,24 @@ All settings are in `backend/.env.example`. The main switches:
   - Bitnob webhook verification
   - watcher settlement and deduplication
   - invoice expiry
+  - webhooks for unpaid invoices are ignored
+  - there are no fake-settlement endpoints
+  - the dev simulator refuses real providers
   - bad signatures and bad recipients
+- **Live, opt-in:** `bitnob_live` (read-only whoami and bank list) and `lnbits_live` (receive and send 21 sats, idempotent retry).
 
-**Verified against live services:** Coinbase, CoinGecko, and Tapnob address lookup. **Not yet verified live:** LNbits, Bitnob. These need credentials.
+**Verified against live services:**
+- Coinbase and CoinGecko.
+- Tapnob address lookup.
+- LNbits (a real server run locally with its test funding source): startup key checks, invoice → payment → watcher settlement → payout, settlement by the real LNbits webhook, the webhook-URL rejection fallback, and outgoing payment with idempotent retry.
+
+**Not yet verified live:** Bitnob (needs the client secret), and LNbits with real funds.
 
 ## 10. Known gaps and next steps
 
 **Before a live demo**
-1. Create an LNbits wallet and run one real invoice end to end with `LIGHTNING_PROVIDER=lnbits`.
-2. Get Bitnob sandbox keys. Confirm `GET /api/whoami` works, fund the sandbox balance, and check one webhook signature. The adapter assumes the signature is hex.
+1. Create an LNbits wallet on a real Lightning backend, and set `LNBITS_URL` and `LNBITS_INVOICE_KEY`.
+2. Add the Bitnob client secret to `.env` and run `cargo test --test bitnob_live`. Then fund the sandbox balance and check one webhook signature. The adapter assumes the signature is hex.
 3. Expose the server publicly (or tunnel it) so Bitnob can reach `BITNOB_CALLBACK_URL`.
 
 **Correctness and robustness**

@@ -25,11 +25,6 @@ fn ack(outcome: WebhookOutcome) -> Json<Value> {
     Json(json!({ "outcome": outcome }))
 }
 
-pub async fn lightning(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> AppResult<Json<Value>> {
-    let event = verified_body(&state.config.lightning_webhook_secret, &headers, &body)?;
-    Ok(ack(payments::handle_lightning_settled(&state, event).await?))
-}
-
 pub async fn provider(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> AppResult<Json<Value>> {
     let event = verified_body(&state.config.provider_webhook_secret, &headers, &body)?;
     Ok(ack(payments::handle_payout_event(&state, event).await?))

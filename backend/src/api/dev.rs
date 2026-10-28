@@ -1,5 +1,6 @@
-//! Demo-only helpers that drive the mock adapters through the same code paths as real webhooks.
-//! Mounted only when `DEV_ROUTES=true`.
+//! Demo-only helper that simulates callbacks from the *mock* payout providers (Tando, NGN mock).
+//! Mounted only when `DEV_ROUTES=true`. There is deliberately no way to fake Lightning
+//! settlement: payments settle only when LNbits reports them paid.
 
 use axum::{
     Json, Router,
@@ -14,28 +15,13 @@ use crate::{
     error::{AppError, AppResult},
     services::{
         new_id,
-        payments::{self, LightningEvent, PayoutEvent, PayoutEventStatus},
+        payments::{self, PayoutEvent, PayoutEventStatus},
     },
     state::AppState,
 };
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/dev/payments/{id}/settle", post(settle))
-        .route("/dev/payments/{id}/payout", post(payout))
-}
-
-async fn settle(State(state): State<AppState>, Path(id): Path<String>) -> AppResult<Json<Value>> {
-    let lightning = db::get_lightning_by_payment(&state.pool, &id)
-        .await?
-        .ok_or(AppError::NotFound("lightning payment"))?;
-    let event = LightningEvent {
-        event_id: new_id("devln"),
-        payment_hash: lightning.payment_hash,
-        amount_sats: lightning.amount_sats,
-    };
-    let outcome = payments::handle_lightning_settled(&state, event).await?;
-    Ok(Json(json!({ "outcome": outcome })))
+    Router::new().route("/dev/payments/{id}/payout", post(payout))
 }
 
 #[derive(Deserialize)]
@@ -49,9 +35,17 @@ async fn payout(
     Path(id): Path<String>,
     Json(body): Json<SimulatePayout>,
 ) -> AppResult<Json<Value>> {
-    let provider_reference = db::get_payout(&state.pool, &id)
+    let payout = db::get_payout(&state.pool, &id)
         .await?
-        .and_then(|p| p.provider_reference)
+        .ok_or(AppError::NotFound("payout"))?;
+    if !payout.provider.ends_with("-mock") {
+        return Err(AppError::Conflict(format!(
+            "{} is a real provider; its status comes from its own webhooks",
+            payout.provider
+        )));
+    }
+    let provider_reference = payout
+        .provider_reference
         .ok_or_else(|| AppError::Conflict("payout has not been submitted to a provider".into()))?;
     let event = PayoutEvent {
         event_id: new_id("devpo"),

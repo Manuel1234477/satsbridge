@@ -16,7 +16,7 @@ Quote (live BTC rates) → Payment → Lightning invoice (LNbits) → Settled �
 | Piece | Implementation |
 |---|---|
 | Exchange rates | Coinbase (primary) → CoinGecko (fallback); XOF and XAF from the euro peg |
-| Lightning | LNbits, or a mock for offline demos |
+| Lightning | LNbits (required; there is no mock node) |
 | NGN bank payouts | Bitnob (NIBSS instant transfer), or a mock |
 | NGN via Lightning Address | Tapnob (`name@tapnob.io`) |
 | KES payouts | Tando (mock for now) |
@@ -35,12 +35,12 @@ Requires Rust 1.88 or newer.
 
 ```bash
 cd backend
-cp .env.example .env   # runs fully offline with mocks; live FX needs internet
+cp .env.example .env   # set LNBITS_URL and LNBITS_INVOICE_KEY (required)
 cargo run              # http://localhost:8080/api/v1/health
-cargo test             # 40 unit + end-to-end tests
+cargo test             # 44 unit + end-to-end tests (no credentials needed)
 ```
 
-To switch from mocks to real providers, set `LIGHTNING_PROVIDER=lnbits` and `NGN_BANK_PROVIDER=bitnob` with their credentials. See the [backend README](backend/README.md#configuration).
+Payout providers default to mocks. For real Naira bank payouts, set `NGN_BANK_PROVIDER=bitnob` with its credentials. See the [backend README](backend/README.md#configuration).
 
 ## Disclaimer
 

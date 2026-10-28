@@ -62,6 +62,18 @@ struct BitnobPayout {
     sat_amount: Option<String>,
 }
 
+/// `GET /api/whoami`: confirms keys, clock and signature are all right.
+#[derive(Debug, Deserialize)]
+pub struct WhoAmI {
+    #[serde(default)]
+    pub active: Option<bool>,
+    #[serde(default)]
+    pub client_name: Option<String>,
+    /// `sandbox` or `production`.
+    #[serde(default)]
+    pub environment: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct LookupData {
     account_name: String,
@@ -107,6 +119,14 @@ pub fn request_signature(client_id: &str, client_secret: &str, timestamp: &str, 
 impl BitnobAdapter {
     pub fn new(http: reqwest::Client, config: BitnobConfig) -> Self {
         Self { http, config }
+    }
+
+    pub async fn whoami(&self) -> Result<WhoAmI, AdapterError> {
+        let identity: WhoAmI = self.call(Method::GET, "/api/whoami", &[], None).await?;
+        if identity.active == Some(false) {
+            return Err(AdapterError::Rejected("Bitnob workspace is not active".into()));
+        }
+        Ok(identity)
     }
 
     async fn call<T: DeserializeOwned>(
@@ -442,6 +462,16 @@ mod tests {
         let fake = Fake::default();
         let app = Router::new()
             .route("/api/payouts/account-lookup", get(lookup))
+            .route(
+                "/api/whoami",
+                get(|headers: HeaderMap| async move {
+                    check_sig(&headers, "")?;
+                    Ok::<_, (StatusCode, Json<Value>)>(Json(json!({
+                        "success": true,
+                        "data": {"active": true, "client_name": "satsbridge", "environment": "sandbox"}
+                    })))
+                }),
+            )
             .route("/api/payouts/{*rest}", post(post_any))
             .with_state(fake.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -466,6 +496,14 @@ mod tests {
             account_number: account.into(),
             resolution_id: None,
         }
+    }
+
+    #[tokio::test]
+    async fn whoami_reports_the_environment() {
+        let (bitnob, _) = adapter(SECRET).await;
+        assert_eq!(bitnob.whoami().await.unwrap().environment.as_deref(), Some("sandbox"));
+        let (wrong, _) = adapter("wrong-secret").await;
+        assert!(matches!(wrong.whoami().await, Err(AdapterError::Rejected(_))));
     }
 
     #[tokio::test]
