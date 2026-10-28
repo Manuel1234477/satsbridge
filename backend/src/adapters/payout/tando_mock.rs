@@ -46,7 +46,7 @@ impl PayoutAdapter for MockTandoAdapter {
         Rail::KeMobileMoney
     }
 
-    async fn institutions(&self) -> Result<Vec<Institution>, AdapterError> {
+    async fn institutions(&self, _country: Option<&str>) -> Result<Vec<Institution>, AdapterError> {
         Ok(vec![Institution {
             code: "MPESA".into(),
             name: "M-Pesa".into(),
