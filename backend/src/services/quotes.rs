@@ -122,7 +122,7 @@ pub fn compute(
     })
 }
 
-pub async fn create_quote(state: &AppState, req: CreateQuoteRequest) -> AppResult<Quote> {
+pub async fn create_quote(state: &AppState, user_id: &str, req: CreateQuoteRequest) -> AppResult<Quote> {
     let (source, destination) = (req.source_currency, req.destination_currency);
     if source == destination {
         return Err(AppError::Validation(
@@ -179,6 +179,7 @@ pub async fn create_quote(state: &AppState, req: CreateQuoteRequest) -> AppResul
     let now = Utc::now();
     let quote = Quote {
         id: new_id("quote"),
+        user_id: Some(user_id.to_string()),
         source_currency: source,
         destination_currency: destination,
         destination_rail: adapter.rail(),

@@ -15,7 +15,7 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{Invoice, InvoiceStatus, LightningAdapter, PaymentSent};
+use super::{Invoice, InvoiceDescription, InvoiceStatus, LightningAdapter, PaymentSent};
 use crate::adapters::AdapterError;
 
 #[derive(Clone)]
@@ -212,8 +212,17 @@ impl LightningAdapter for LnbitsAdapter {
         "lnbits"
     }
 
-    async fn create_invoice(&self, amount_sats: i64, memo: &str, expiry_secs: i64) -> Result<Invoice, AdapterError> {
-        let body = json!({ "out": false, "amount": amount_sats, "unit": "sat", "memo": memo, "expiry": expiry_secs });
+    async fn create_invoice(
+        &self,
+        amount_sats: i64,
+        description: &InvoiceDescription,
+        expiry_secs: i64,
+    ) -> Result<Invoice, AdapterError> {
+        let mut body = json!({ "out": false, "amount": amount_sats, "unit": "sat", "memo": description.memo, "expiry": expiry_secs });
+        if let Some(metadata) = &description.lnurl_metadata {
+            // LNbits hashes this into the invoice's description hash.
+            body["unhashed_description"] = json!(hex::encode(metadata));
+        }
         let (mut status, mut bytes) = match &self.config.webhook_url {
             Some(webhook) => {
                 let mut with_hook = body.clone();
@@ -366,6 +375,13 @@ mod tests {
     use super::*;
 
     const INVOICE_KEY: &str = "inv-key";
+
+    fn memo(text: &str) -> InvoiceDescription {
+        InvoiceDescription {
+            memo: text.into(),
+            lnurl_metadata: None,
+        }
+    }
     const ADMIN_KEY: &str = "admin-key";
 
     fn invoice(preimage: &[u8]) -> (String, String) {
@@ -480,7 +496,7 @@ mod tests {
     #[tokio::test]
     async fn creates_invoices_and_reads_status() {
         let ln = lnbits(None).await;
-        let inv = ln.create_invoice(1_000, "test", 600).await.unwrap();
+        let inv = ln.create_invoice(1_000, &memo("test"), 600).await.unwrap();
         assert!(inv.payment_request.starts_with("lnbcrt"));
         assert_eq!(
             ln.invoice_status(&inv.payment_hash).await.unwrap(),
@@ -490,10 +506,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sends_lnurl_metadata_as_hex() {
+        let ln = lnbits(None).await;
+        let description = InvoiceDescription {
+            memo: "m".into(),
+            lnurl_metadata: Some(r#"[["text/plain","x"]]"#.into()),
+        };
+        assert!(ln.create_invoice(1_000, &description, 600).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn falls_back_when_lnbits_rejects_the_webhook_url() {
         let mut ln = lnbits(None).await;
         ln.config.webhook_url = Some("http://127.0.0.1:8080/api/v1/webhooks/lnbits".into());
-        assert!(ln.create_invoice(1_000, "test", 600).await.is_ok());
+        assert!(ln.create_invoice(1_000, &memo("test"), 600).await.is_ok());
     }
 
     #[tokio::test]

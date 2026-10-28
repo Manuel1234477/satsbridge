@@ -19,6 +19,8 @@ pub enum AppError {
     QuoteExpired,
     #[error("unauthorized")]
     Unauthorized,
+    #[error("too many requests; slow down")]
+    RateLimited,
     #[error("invalid webhook signature")]
     InvalidSignature,
     #[error(transparent)]
@@ -41,6 +43,7 @@ impl IntoResponse for AppError {
             AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             AppError::QuoteExpired => (StatusCode::GONE, "quote_expired"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            AppError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             AppError::InvalidSignature => (StatusCode::UNAUTHORIZED, "invalid_signature"),
             AppError::Adapter(AdapterError::InvalidRecipient(_)) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "invalid_recipient")

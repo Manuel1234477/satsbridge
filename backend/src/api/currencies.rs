@@ -25,6 +25,9 @@ pub struct PayoutInfo {
     max_payout_minor: Option<i64>,
     /// False when the provider converts at its own rate, so quoted amounts are estimates.
     guaranteed_amount: bool,
+    /// Countries served, for mobile money (XOF and XAF span several countries).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    countries: Vec<String>,
 }
 
 pub async fn list(State(state): State<AppState>) -> Json<Vec<CurrencyInfo>> {
@@ -45,9 +48,10 @@ pub async fn list(State(state): State<AppState>) -> Json<Vec<CurrencyInfo>> {
                         min_payout_minor: a.min_payout_minor(),
                         max_payout_minor: a.max_payout_minor(),
                         guaranteed_amount: a.guarantees_destination_amount(),
+                        countries: a.countries(),
                     })
                     .collect();
-                rails.sort_by_key(|r| r.rail == Rail::LightningAddress);
+                rails.sort_by_key(|r| (r.rail == Rail::LightningAddress, r.provider.ends_with("-mock")));
                 rails
             },
         })

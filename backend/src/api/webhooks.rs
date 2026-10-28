@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::{
-    adapters::{lightning::lnbits, payout::bitnob},
+    adapters::{bitnob, lightning::lnbits},
     error::{AppError, AppResult},
     security::{SIGNATURE_HEADER, verify_hmac_sha512, verify_signature},
     services::{

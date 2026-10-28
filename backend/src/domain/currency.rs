@@ -56,6 +56,20 @@ impl Currency {
     }
 }
 
+/// Currency used for payouts in a country (ISO 3166 alpha-2), for the countries we serve.
+pub fn currency_for_country(country: &str) -> Option<Currency> {
+    match country.to_ascii_uppercase().as_str() {
+        "NG" => Some(Currency::Ngn),
+        "KE" => Some(Currency::Kes),
+        "GN" => Some(Currency::Gnf),
+        // UEMOA
+        "BJ" | "BF" | "CI" | "GW" | "ML" | "NE" | "SN" | "TG" => Some(Currency::Xof),
+        // CEMAC
+        "CM" | "CF" | "TD" | "CG" | "GQ" | "GA" => Some(Currency::Xaf),
+        _ => None,
+    }
+}
+
 impl fmt::Display for Currency {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.code())
