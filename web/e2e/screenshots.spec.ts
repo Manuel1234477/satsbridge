@@ -18,7 +18,7 @@ for (const vp of VIEWPORTS) {
     await page.goto('/');
     await page.getByLabel('Amount you send').fill('10000');
     await expect(page.getByLabel('Amount they receive')).not.toHaveValue('', { timeout: 15_000 });
-    await expect(page.getByText(/Expires in \d+s/)).toBeVisible();
+    await expect(page.getByText(/expires in \d+s/)).toBeVisible();
     await page.screenshot({ path: `${OUT}/${vp.name}-1-send.png`, fullPage: false });
 
     await page.getByRole('button', { name: 'Continue' }).click();

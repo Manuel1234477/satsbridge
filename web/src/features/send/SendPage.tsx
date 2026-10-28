@@ -1,6 +1,9 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { ApiError } from '@/lib/api/errors';
+import { isRateStale } from '@/lib/rate-freshness';
+import { useNow } from '@/hooks/useNow';
 import Link from 'next/link';
 import { ArrowDownUp } from 'lucide-react';
 import { QuoteCard } from '@/components/QuoteCard';
@@ -75,6 +78,8 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
   const pending = inputKey !== debouncedKey || quoteQuery.isFetching;
 
   const { isExpired } = useCountdown(quote?.expires_at);
+  const now = useNow();
+  const retryable = quoteQuery.error instanceof ApiError && (quoteQuery.error.code === 'provider_unavailable' || quoteQuery.error.code === 'rate_limited');
   const refetchQuote = quoteQuery.refetch;
   const refreshQuote = useCallback(() => {
     void refetchQuote();
@@ -113,7 +118,9 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
         : pending || quoteQuery.isFetching
           ? 'Getting your rate…'
           : quoteQuery.isError
-            ? 'Fix the amount to continue'
+            ? retryable
+              ? 'Could not get a rate. Try again.'
+              : 'Fix the amount to continue'
             : '';
 
   return (
@@ -200,15 +207,21 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
 
       <div aria-live="polite" className="flex flex-col gap-3">
         {quoteQuery.isError && (
-          <p role="alert" className="error-text">
-            {quoteQuery.error.message}
-          </p>
+          <div className="notice notice-failed flex-col">
+            <p role="alert">{quoteQuery.error.message}</p>
+            {retryable && (
+              <button type="button" className="btn btn-quiet btn-block" onClick={() => void refetchQuote()} disabled={quoteQuery.isFetching}>
+                {quoteQuery.isFetching ? 'Trying again…' : 'Try again'}
+              </button>
+            )}
+          </div>
         )}
         {quote && (
           <QuoteCard
             quote={quote}
             sourceExponent={sourceExponent}
             destinationExponent={destinationExponent}
+            stale={isRateStale(quote.rate_as_of, now, quoteQuery.isError)}
             onExpired={refreshQuote}
           />
         )}
