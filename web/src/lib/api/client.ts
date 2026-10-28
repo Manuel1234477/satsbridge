@@ -1,6 +1,7 @@
 import type { ZodType } from 'zod';
 import { ErrorResponseSchema, UserSchema } from './schemas';
 import { createApiError, type ApiError } from './errors';
+import { isMockApi, mockRespond } from './mock';
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
 
@@ -41,6 +42,10 @@ async function readJson(res: Response): Promise<unknown> {
 }
 
 async function send(path: string, init: RequestInit, token?: string): Promise<Response> {
+  if (isMockApi()) {
+    const body = typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+    return mockRespond(init.method ?? 'GET', path, body, token);
+  }
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   try {
