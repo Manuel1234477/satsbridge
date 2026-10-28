@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { CurrencyInfoSchema, PaymentDetailsSchema, PaymentIntentSchema, PayResponseSchema, QuoteSchema, RecipientResolutionSchema, UserSchema } from './schemas';
 
 type MockModule = typeof import('./mock');
 let mock: MockModule;
@@ -24,20 +25,6 @@ async function quote(token: string, amount: number) {
   return data;
 }
 
-async function resolveAndPay(token: string, quoteId: string, account: string) {
-  const resolved = await call('POST', '/recipients/resolve', { currency: 'NGN', bank_code: '058', account_number: account }, token);
-  expect(resolved.status).toBe(200);
-  return call(
-    'POST',
-    '/payments',
-    {
-      quote_id: quoteId,
-      recipient: { rail: 'NG_BANK_TRANSFER', bank_code: '058', account_number: account, resolution_id: resolved.data.resolution_id },
-    },
-    token,
-  );
-}
-
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
@@ -46,6 +33,15 @@ beforeAll(async () => {
 });
 
 describe('mock API', () => {
+  it('returns payloads that match the Zod schemas the client validates with', async () => {
+    const user = await call('POST', '/users', {});
+    expect(UserSchema.safeParse(user.data).success).toBe(true);
+    const currencies = await call('GET', '/currencies', undefined);
+    expect(CurrencyInfoSchema.array().safeParse(currencies.data).success).toBe(true);
+    const resolved = await call('POST', '/recipients/resolve', { currency: 'NGN', bank_code: '058', account_number: '0123456789' }, user.data.token as string);
+    expect(RecipientResolutionSchema.safeParse(resolved.data).success).toBe(true);
+  });
+
   it('rejects requests without a valid token', async () => {
     const { status, data } = await call('POST', '/quotes', { source_currency: 'XOF', destination_currency: 'NGN', amount: 1000, amount_side: 'source' }, 'bogus');
     expect(status).toBe(401);
@@ -72,14 +68,19 @@ describe('mock API', () => {
     const id = payment.data.id as string;
     expect(payment.data.status).toBe('QUOTED');
 
+    expect(QuoteSchema.safeParse(q).success).toBe(true);
+    expect(PaymentIntentSchema.safeParse(payment.data).success).toBe(true);
+
     const pay = await call('POST', `/payments/${id}/pay`, {}, token);
     expect(pay.status).toBe(200);
     expect(pay.data.amount_sats).toBe(q.amount_sats);
+    expect(PayResponseSchema.safeParse(pay.data).success).toBe(true);
 
     const seen = new Set<string>();
     for (let i = 0; i < 60; i++) {
       const details = await call('GET', `/payments/${id}`, undefined, token);
       seen.add(details.data.status as string);
+      expect(PaymentDetailsSchema.safeParse(details.data).success).toBe(true);
       if (details.data.status === 'COMPLETED') break;
       await wait(20);
     }
@@ -114,6 +115,10 @@ describe('mock API', () => {
     expect(right.data.status).toBe('REFUNDED');
     expect(right.data.refund_sats).toBe(sats);
     expect(right.data.refunded_at).not.toBeNull();
+    expect(PaymentIntentSchema.safeParse(right.data).success).toBe(true);
+    const after = await call('GET', `/payments/${id}`, undefined, token);
+    expect(PaymentDetailsSchema.safeParse(after.data).success).toBe(true);
+    expect(after.data.status).toBe('REFUNDED');
   });
 
   it('rejects payment on a quote that has expired', async () => {

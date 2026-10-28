@@ -181,6 +181,13 @@ function Outcome({ payment, currencies }: { payment: PaymentDetails; currencies:
         </Banner>
       );
     case 'REFUND_PENDING':
+      if (payment.payout?.status === 'reversed') {
+        return (
+          <Banner tone="error" icon={<AlertCircle className="h-5 w-5" />} title="Payment reversed">
+            The payout partner reversed this payment after it had been reported as delivered. Add a Lightning invoice below to receive your refund.
+          </Banner>
+        );
+      }
       return (
         <Banner tone="warning" icon={<AlertCircle className="h-5 w-5" />} title="Refund needed">
           {payment.failure_reason ?? 'This payment could not be completed.'} Add a Lightning invoice below to receive your refund.

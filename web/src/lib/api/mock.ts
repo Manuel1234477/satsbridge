@@ -181,7 +181,7 @@ interface Derived {
   failure_reason: string | null;
   payout: null | Record<string, unknown> & { status: string };
   lightningStatus: 'pending' | 'settled';
-  events: { id: number; event_type: string; from_status: string | null; to_status: string | null; detail: string | null; created_at: string }[];
+  events: { id: number; payment_intent_id: string; event_type: string; from_status: null; to_status: string | null; detail: string | null; created_at: string }[];
 }
 
 function payoutOutcome(p: MockPayment): 'success' | 'failed' | 'reversed' | 'stall' {
@@ -201,7 +201,7 @@ function derive(p: MockPayment, nowMs: number): Derived {
   const events: Derived['events'] = [];
   let id = 1;
   const push = (eventType: string, to: string | null, atMs: number, detail: string | null = null) =>
-    events.push({ id: id++, event_type: eventType, from_status: null, to_status: to, detail, created_at: iso(atMs) });
+    events.push({ id: id++, payment_intent_id: p.id, event_type: eventType, from_status: null, to_status: to, detail, created_at: iso(atMs) });
 
   push('payment.created', 'QUOTED', p.createdAtMs);
   const base = { status: 'QUOTED', failure_reason: null, payout: null, lightningStatus: 'pending' as const };
@@ -213,8 +213,17 @@ function derive(p: MockPayment, nowMs: number): Derived {
   const t = (nowMs - p.invoice.createdAtMs) / 1000 / TIME_SCALE;
 
   if (p.refund && nowMs >= p.refund.atMs) {
-    push('refund.completed', 'REFUNDED', p.refund.atMs);
-    return { ...base, status: 'REFUNDED', lightningStatus: 'settled', events, payout: payoutSnapshot(p, 'failed', null, null, null), failure_reason: 'Refunded' };
+    const before = derive({ ...p, refund: null }, nowMs);
+    const refundEvent = {
+      id: before.events.length + 1,
+      payment_intent_id: p.id,
+      event_type: 'refund.completed',
+      from_status: null,
+      to_status: 'REFUNDED',
+      detail: null,
+      created_at: iso(p.refund.atMs),
+    };
+    return { ...before, status: 'REFUNDED', events: [...before.events, refundEvent] };
   }
 
   if (outcome === 'stall' && t < DETECT_S) {
