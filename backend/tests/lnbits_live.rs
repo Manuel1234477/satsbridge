@@ -32,6 +32,7 @@ fn adapter(invoice_key: String, admin_key: Option<String>) -> LnbitsAdapter {
 }
 
 #[tokio::test]
+#[ignore = "live: moves real sats on a real LNbits; run with `-- --ignored`"]
 async fn receive_and_send_on_a_real_lnbits() {
     let (Some(_), Some(invoice_key), Some(admin_key), Some(payee_key)) = (
         env("LNBITS_TEST_URL"),

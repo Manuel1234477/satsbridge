@@ -213,7 +213,7 @@ All settings are in `backend/.env.example` and the [backend README](../backend/R
   - XOF → XAF over mobile money
 - **Bitnob stand-in (`bitnob_sandbox`, 2):** starts the real `bitnob_sandbox` binary and runs the real Bitnob adapter against it: a successful payout, an expired one, signed webhooks verified, reconciliation, a rejected credential and a rejected beneficiary.
 - **LNbits stand-in (`lnbits_sandbox`, 2):** starts the real `lnbits_sandbox` binary and runs the real LNbits adapter against it: signed invoices, settlement only once the sandbox reports payment, the double-encoded webhook, the LNURL description hash, expiry, outgoing payments with an idempotent retry, and the invoice/admin key rules.
-- **Live, opt-in:** `bitnob_live` (read-only whoami, limits, bank list and field rules; also works against the stand-in) and `lnbits_live` (receive and send 21 sats, idempotent retry). They pass trivially when their credentials aren't set.
+- **Live, opt-in:** `bitnob_live` (read-only whoami, limits, bank list and field rules; also works against the stand-in) and `lnbits_live` (receive and send 21 sats, idempotent retry). They are `#[ignore]`d, so a plain `cargo test` never calls a real provider or moves sats; run them with `-- --ignored`. They also pass trivially when their credentials aren't set.
 
 **Verified against live services:**
 - Coinbase and CoinGecko.
@@ -226,7 +226,7 @@ All settings are in `backend/.env.example` and the [backend README](../backend/R
 
 **Before a live demo**
 1. Create an LNbits wallet on a real Lightning backend, and set `LNBITS_URL` and `LNBITS_INVOICE_KEY`.
-2. Add the Bitnob client secret and webhook secret to `.env` and run `cargo test --test bitnob_live -- --nocapture`. It prints whether the keys are sandbox or production, and each country's limits and fields. Then fund the sandbox balance and check one webhook signature. The adapter assumes the signature is hex. Until credentials exist, use the local stand-in.
+2. Add the Bitnob client secret and webhook secret to `.env` and run `cargo test --test bitnob_live -- --ignored --nocapture`. It prints whether the keys are sandbox or production, and each country's limits and fields. Then fund the sandbox balance and check one webhook signature. The adapter assumes the signature is hex. Until credentials exist, use the local stand-in.
 3. Expose the server publicly (or tunnel it) so Bitnob can reach `BITNOB_CALLBACK_URL`.
 
 **Correctness and robustness**

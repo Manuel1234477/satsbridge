@@ -1,0 +1,10 @@
+# Secrets: .env and every copy of it (editor saves, backups, local variants).
+# Only the .env.example templates are committed.
+.env
+.env.*
+!.env.example
+
+# Editor swap and backup files can hold a copy of whatever was open, including .env.
+*.swp
+*.swo
+*~
