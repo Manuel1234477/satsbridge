@@ -33,23 +33,21 @@ export async function createUser(contact?: string): Promise<User> {
 
 // Currency endpoints
 export async function getCurrencies(): Promise<CurrencyInfo[]> {
-  const response = await apiRequest('/currencies', {
+  return apiRequest<CurrencyInfo[]>('/currencies', {
     method: 'GET',
     requiresAuth: false,
     schema: CurrencyInfoSchema.array(),
   });
-  return response;
 }
 
 export async function getPayoutInstitutions(currency: string, rail?: string): Promise<PayoutInstitution[]> {
   const params = new URLSearchParams({ currency });
   if (rail) params.append('rail', rail);
-  const response = await apiRequest(`/payout-institutions?${params}`, {
+  return apiRequest<PayoutInstitution[]>(`/payout-institutions?${params}`, {
     method: 'GET',
     requiresAuth: false,
     schema: PayoutInstitutionSchema.array(),
   });
-  return response;
 }
 
 // Quote endpoints
@@ -60,7 +58,7 @@ export async function createQuote(input: {
   amount_side?: 'SOURCE' | 'DESTINATION';
   rail?: string;
 }): Promise<Quote> {
-  return apiRequest('/quotes', {
+  return apiRequest<Quote>('/quotes', {
     method: 'POST',
     requiresAuth: true,
     body: input,
@@ -69,7 +67,7 @@ export async function createQuote(input: {
 }
 
 export async function getQuote(id: string): Promise<Quote> {
-  return apiRequest(`/quotes/${id}`, {
+  return apiRequest<Quote>(`/quotes/${id}`, {
     method: 'GET',
     requiresAuth: true,
     schema: QuoteSchema,
@@ -95,7 +93,7 @@ export async function createPayment(input: {
   quote_id: string;
   recipient: Recipient;
 }): Promise<PaymentIntent> {
-  return apiRequest('/payments', {
+  return apiRequest<PaymentIntent>('/payments', {
     method: 'POST',
     requiresAuth: true,
     body: input,
@@ -104,7 +102,7 @@ export async function createPayment(input: {
 }
 
 export async function payPayment(id: string): Promise<PaymentDetails> {
-  return apiRequest(`/payments/${id}/pay`, {
+  return apiRequest<PaymentDetails>(`/payments/${id}/pay`, {
     method: 'POST',
     requiresAuth: true,
     body: {},
@@ -113,7 +111,7 @@ export async function payPayment(id: string): Promise<PaymentDetails> {
 }
 
 export async function getPayment(id: string): Promise<PaymentDetails> {
-  return apiRequest(`/payments/${id}`, {
+  return apiRequest<PaymentDetails>(`/payments/${id}`, {
     method: 'GET',
     requiresAuth: true,
     schema: PaymentDetailsSchema,
@@ -121,7 +119,7 @@ export async function getPayment(id: string): Promise<PaymentDetails> {
 }
 
 export async function refundPayment(id: string, paymentRequest: string): Promise<void> {
-  await apiRequest(`/payments/${id}/refund`, {
+  await apiRequest<PaymentDetails>(`/payments/${id}/refund`, {
     method: 'POST',
     requiresAuth: true,
     body: { payment_request: paymentRequest },
@@ -130,17 +128,16 @@ export async function refundPayment(id: string, paymentRequest: string): Promise
 }
 
 export async function getTransactions(limit = 50): Promise<TransactionList> {
-  const response = await apiRequest(`/transactions?limit=${limit}`, {
+  return apiRequest<TransactionList>(`/transactions?limit=${limit}`, {
     method: 'GET',
     requiresAuth: true,
     schema: TransactionListSchema,
   });
-  return response;
 }
 
 // Dev endpoints
 export async function simulatePayout(id: string, status: string): Promise<PaymentDetails> {
-  return apiRequest(`/dev/payments/${id}/payout`, {
+  return apiRequest<PaymentDetails>(`/dev/payments/${id}/payout`, {
     method: 'POST',
     requiresAuth: true,
     body: { status },

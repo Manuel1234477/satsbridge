@@ -32,7 +32,7 @@ export function SendPage() {
 
   // Debounce quote creation
   useEffect(() => {
-    if (!sourceCurrency || !destCurrency || sourceAmount === null && destAmount === null) {
+    if (!sourceCurrency || !destCurrency || (sourceAmount === null && destAmount === null)) {
       setQuoteId(null);
       return;
     }
@@ -46,11 +46,11 @@ export function SendPage() {
     const timer = setTimeout(() => {
       createQuoteMutation.mutate(
         {
-          source_currency: sourceCurrency,
-          destination_currency: destCurrency,
+          source_currency: sourceCurrency as Currency,
+          destination_currency: destCurrency as Currency,
           amount,
           amount_side: amountSide,
-          rail: selectedRail || undefined,
+          rail: (selectedRail as Rail) || undefined,
         },
         {
           onSuccess: (quote) => {
@@ -59,10 +59,10 @@ export function SendPage() {
             // Update the non-editing side
             if (amountSide === 'SOURCE') {
               setDestAmount(quote.destination_amount);
-              setDestAmountInput(formatMoney(quote.destination_amount, destCurrency));
+              setDestAmountInput(formatMoney(quote.destination_amount, destCurrency as Currency));
             } else {
               setSourceAmount(quote.source_amount);
-              setSourceAmountInput(formatMoney(quote.source_amount, sourceCurrency));
+              setSourceAmountInput(formatMoney(quote.source_amount, sourceCurrency as Currency));
             }
           },
           onError: (err: any) => {
@@ -132,8 +132,8 @@ export function SendPage() {
             <label className="block text-sm font-medium">You send</label>
             <CurrencySelector
               currencies={currencies}
-              value={sourceCurrency}
-              onChange={(code) => {
+              value={sourceCurrency || ''}
+              onChange={(code: string) => {
                 setSourceCurrency(code as Currency);
                 setQuoteId(null);
               }}
@@ -169,8 +169,8 @@ export function SendPage() {
             <label className="block text-sm font-medium">They receive</label>
             <CurrencySelector
               currencies={currencies}
-              value={destCurrency}
-              onChange={(code) => {
+              value={destCurrency || ''}
+              onChange={(code: string) => {
                 setDestCurrency(code as Currency);
                 setSelectedRail('');
                 setQuoteId(null);
@@ -181,8 +181,8 @@ export function SendPage() {
             {/* Rail selector for multi-rail currencies */}
             {availableRails.length > 1 && (
               <select
-                value={selectedRail}
-                onChange={(e) => {
+                value={selectedRail || ''}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                   setSelectedRail(e.target.value as Rail | '');
                   setQuoteId(null);
                 }}
