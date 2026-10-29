@@ -175,7 +175,7 @@ pub async fn build_payouts(
             payouts.register(Arc::new(MockNgnAdapter::new(cfg.ngn_max_payout_minor)));
         }
         payouts.register(Arc::new(MockTandoAdapter));
-        for currency in [Currency::Xof, Currency::Xaf] {
+        for currency in [Currency::Xof, Currency::Xaf, Currency::Gnf] {
             if payouts.get(currency, Rail::MobileMoney).is_none() {
                 payouts.register(Arc::new(MockMobileMoneyAdapter::new(currency)));
             }
