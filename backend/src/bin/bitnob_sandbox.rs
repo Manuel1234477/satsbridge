@@ -128,6 +128,16 @@ const COUNTRIES: &[Country] = &[
         number_pattern: r"^\d{9}$",
         institutions: &[("MTN", "MTN MoMo"), ("OM", "Orange Money")],
     },
+    Country {
+        code: "GN",
+        currency: "GNF",
+        destination: "mobile_money",
+        min: 1_000,
+        max: 50_000_000,
+        btc_price: 730_000_000,
+        number_pattern: r"^\d{9}$",
+        institutions: &[("MTN", "MTN MoMo"), ("OM", "Orange Money")],
+    },
 ];
 
 const NAMES: &[&str] = &["ADA OBI", "CHUKWUEMEKA OKAFOR", "AMINA YUSUF", "FATOU DIALLO", "JOHN KAMAU"];
