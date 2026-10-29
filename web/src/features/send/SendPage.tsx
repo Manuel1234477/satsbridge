@@ -62,7 +62,7 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
     side === 'source' ? parseMinor(sourceText, sourceExponent) : parseMinor(destinationText, destinationExponent);
 
   const inputKey =
-    sourceInfo && destinationInfo && activeRail && sourceInfo.can_send && typedMinor !== null && typedMinor > 0
+    sourceInfo && destinationInfo && activeRail && typedMinor !== null && typedMinor > 0
       ? JSON.stringify({
           source_currency: sourceCode,
           destination_currency: destinationCode,
@@ -89,7 +89,7 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
   }, [refetchQuote]);
 
 
-  const canSwap = destinationInfo?.can_send === true;
+  const canSwap = (sourceInfo?.payout_rails.length ?? 0) > 0;
   const swap = () => {
     if (!canSwap) return;
     setSourceCode(destinationCode);
@@ -272,7 +272,6 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
         title="Send currency"
         currencies={currencies}
         selected={sourceCode}
-        onlySendable
         onSelect={(code) => {
           setSourceCode(code as Currency);
           setChosenRail('');

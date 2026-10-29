@@ -1,7 +1,5 @@
 # SatsBridge web app (Next.js)
 
-This is one of two frontends in the repo. `../frontend/` holds a separate Vite + React app. This one lives in `web/`.
-
 Sender web app for SatsBridge: pick a currency pair, get a live quote, confirm the recipient, pay a Lightning invoice, and follow the payment to receipt. Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4, TanStack Query and Zod.
 
 **Status:** hackathon MVP, demo only. No real money is moved. This is a technical demonstration and not a licensed financial service.
@@ -13,7 +11,7 @@ Sender web app for SatsBridge: pick a currency pair, get a live quote, confirm t
 | Send screen: live quotes (400 ms debounce), amount in either field, swap, payout method selector, quote countdown, auto-refresh on expiry, continue blocked on an expired quote | Yes | Browser test (happy path) |
 | Live rate: "1 XOF ≈ x NGN" from the latest quote, rate source, "updated Xs ago" from `rate_as_of`; quote refreshed every 30 s while the tab is visible and on expiry; Live/Stale pill (Stale after 2 min or a failed request); Try again on `provider_unavailable` and `rate_limited` | Yes | Unit test (freshness rule). Not run against the real backend |
 | NGN bank recipient: bank search, 10-digit account, resolve, "Confirm account holder" step, resolution cleared when bank or account changes | Yes | Browser test (happy path) |
-| Lightning Address and KES M-Pesa recipient forms | Yes | Not run in a browser |
+| Lightning Address, KES M-Pesa and XOF/XAF mobile money (country, provider, phone) recipient forms | Yes | Not run in a browser. Mobile money API calls checked against the real backend and in the mock test |
 | Review, then `POST /payments`, then `POST /payments/{id}/pay`. A failed `/pay` retries on the same payment, never a second one | Yes | Browser test (happy path) |
 | Payment page: QR (`lightning:` URI), copy invoice, open in wallet, copy LNURL, invoice countdown, polling every 3 s (stops on EXPIRED/REFUNDED; COMPLETED polled every 30 s to catch reversals) | Yes | Browser tests |
 | Tracker (received, converting, paying, delivered), raw status in Details, event timeline | Yes | Browser tests |
@@ -29,11 +27,11 @@ Sender web app for SatsBridge: pick a currency pair, get a live quote, confirm t
 | Mock API mode (`NEXT_PUBLIC_MOCK_API=true`): same routes and shapes, time-derived status progression, magic values for failure, reversal, expiry and expired quote | Yes | Vitest (mock contract), Playwright |
 | Disclaimer banner ("Demo mode", dismissable) | Yes | Visual check not done |
 
-Unit tests: 22 Vitest tests (money, status-to-step mapping, error mapping, mock contract). Browser tests: 3 Playwright tests in Chrome, all against mock mode.
+Unit tests: 28 Vitest tests (money, status-to-step mapping, rate freshness, error mapping, mock contract). Browser tests: 3 Playwright tests in Chrome, all against mock mode.
 
 ## What is not built or not verified
 
-- **Real backend end to end: not run.** The backend needs LNbits. Nothing in the real-backend path was exercised in this work. Only the mock was tested in a browser.
+- **Real backend: API contract checked, UI not run against it.** The client functions (currencies, bank list, quote, name lookup, payment, pay, status, transactions, simulated payout) were run against the backend with the local LNbits stand-in, through to COMPLETED, and every response passed the Zod schemas. The browser UI itself was only tested in mock mode.
 - **Internationalization (English and French, language toggle): not built.** All strings are hardcoded English. There is no `src/i18n` directory.
 - **Accessibility audit: not done.** Focus styles and labels are in place, but there was no axe run and no keyboard-only pass.
 - **360 px, light and dark visual checks: not done.** Dark mode follows `prefers-color-scheme` only; there is no manual toggle. Layouts were not screenshotted.
@@ -94,6 +92,7 @@ Not every machine meets these. The mock mode exists for the cases where they are
 cd ../backend
 cp .env.example .env         # set LNBITS_URL and LNBITS_INVOICE_KEY
 cargo run                    # serves http://localhost:8080
+# No LNbits account? `cargo run --bin lnbits_sandbox` is a local stand-in (see the backend README).
 ```
 
 Then run the frontend with `NEXT_PUBLIC_MOCK_API=false`. The backend's `.env.example` already allows `http://localhost:3000` via `CORS_ALLOWED_ORIGINS`.
@@ -135,13 +134,13 @@ The demo script is in [`../docs/demo-script.md`](../docs/demo-script.md).
 ```
 src/
   app/                 routes: / (send, ?from=<id> to prefill), /payments/[id], /history
-  components/          MoneyField, CurrencySelect, QuoteCard, LightningQr, Disclaimer
+  components/          LiveRatePanel, QrCode, ui/ (AppShell, AmountInput, CurrencySheet, RailSelector, StatusPill, ...)
   features/
     send/              SendPage, ReviewPage, SendWizard
-    recipient/         NgBankRecipient, LightningAddressRecipient, KePhoneRecipient
+    recipient/         NgBankRecipient, LightningAddressRecipient, KePhoneRecipient, MobileMoneyRecipient
     payment/           PaymentView (every status), refund, dev panel
     history/           HistoryList
-  hooks/               useQuotePreview, usePaymentDetails, useCountdown, useDebounced, ...
+  hooks/               useQuotePreview, usePayment, useCountdown, useDebounced, useCurrencies, ...
   lib/
     api/               client (auth, retry), schemas (Zod), index (endpoints), errors, mock
     money.ts           exact integer money formatting and parsing

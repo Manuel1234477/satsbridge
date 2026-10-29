@@ -13,6 +13,7 @@ import { useCountdown } from '@/hooks/useCountdown';
 import { NgBankRecipient } from '@/features/recipient/NgBankRecipient';
 import { LightningAddressRecipient } from '@/features/recipient/LightningAddressRecipient';
 import { KePhoneRecipient } from '@/features/recipient/KePhoneRecipient';
+import { MobileMoneyRecipient } from '@/features/recipient/MobileMoneyRecipient';
 import type { RecipientDraft } from '@/features/recipient/types';
 
 interface ReviewPageProps {
@@ -75,7 +76,13 @@ export function ReviewPage({ quote, rail, currencies, onBack, onPaid }: ReviewPa
           {rail === 'NG_BANK_TRANSFER' && <NgBankRecipient onConfirm={setDraft} />}
           {rail === 'LIGHTNING_ADDRESS' && <LightningAddressRecipient onConfirm={setDraft} />}
           {rail === 'KE_MOBILE_MONEY' && <KePhoneRecipient onConfirm={setDraft} />}
-          {rail === 'MOBILE_MONEY' && <p className="label">This payout method is not available in this demo.</p>}
+          {rail === 'MOBILE_MONEY' && (
+            <MobileMoneyRecipient
+              currency={quote.destination_currency}
+              countries={currencies.find((c) => c.code === quote.destination_currency)?.payout_rails.find((r) => r.rail === 'MOBILE_MONEY')?.countries ?? []}
+              onConfirm={setDraft}
+            />
+          )}
         </section>
       )}
 

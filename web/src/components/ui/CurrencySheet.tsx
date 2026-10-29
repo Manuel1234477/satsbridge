@@ -12,19 +12,16 @@ interface CurrencySheetProps {
   currencies: CurrencyInfo[];
   selected: string;
   onSelect: (code: string) => void;
-  onlySendable?: boolean;
 }
 
-export function CurrencySheet({ open, onClose, title, currencies, selected, onSelect, onlySendable }: CurrencySheetProps) {
+export function CurrencySheet({ open, onClose, title, currencies, selected, onSelect }: CurrencySheetProps) {
   const [query, setQuery] = useState('');
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return currencies.filter(
-      (c) =>
-        (!onlySendable || c.can_send) &&
-        (q === '' || c.code.toLowerCase().includes(q) || c.name.toLowerCase().includes(q)),
+      (c) => q === '' || c.code.toLowerCase().includes(q) || c.name.toLowerCase().includes(q),
     );
-  }, [currencies, query, onlySendable]);
+  }, [currencies, query]);
 
   return (
     <Sheet open={open} onClose={onClose} title={title}>

@@ -159,7 +159,6 @@ export const CurrencyInfoSchema = z.object({
   code: CurrencySchema,
   name: z.string(),
   exponent: z.number().int(),
-  can_send: z.boolean(),
   payout_rails: z.array(
     z.object({
       rail: RailSchema,

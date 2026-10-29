@@ -42,6 +42,18 @@ describe('mock API', () => {
     expect(RecipientResolutionSchema.safeParse(resolved.data).success).toBe(true);
   });
 
+  it('accepts a mobile money recipient for XOF and rejects a malformed number', async () => {
+    const token = await signup();
+    const { data: q } = await call('POST', '/quotes', { source_currency: 'NGN', destination_currency: 'XOF', amount: 500000, amount_side: 'source', rail: 'MOBILE_MONEY' }, token);
+    const recipient = { rail: 'MOBILE_MONEY', country: 'SN', provider_code: 'WAVE', phone_number: '771234567' };
+    const bad = await call('POST', '/payments', { quote_id: q.id, recipient: { ...recipient, phone_number: '12' } }, token);
+    expect(bad.status).toBe(422);
+    const ok = await call('POST', '/payments', { quote_id: q.id, recipient }, token);
+    expect(ok.status).toBe(201);
+    expect(PaymentIntentSchema.safeParse(ok.data).success).toBe(true);
+    expect(ok.data.recipient_masked).toBe('SN:WAVE:*****4567');
+  });
+
   it('rejects requests without a valid token', async () => {
     const { status, data } = await call('POST', '/quotes', { source_currency: 'XOF', destination_currency: 'NGN', amount: 1000, amount_side: 'source' }, 'bogus');
     expect(status).toBe(401);
