@@ -12,7 +12,6 @@ pub struct CurrencyInfo {
     name: &'static str,
     /// Decimal places of the minor unit; all API amounts are integers in minor units.
     exponent: u32,
-    can_send: bool,
     /// Available payout rails; the first is the default when a quote names none.
     payout_rails: Vec<PayoutInfo>,
 }
@@ -37,7 +36,6 @@ pub async fn list(State(state): State<AppState>) -> Json<Vec<CurrencyInfo>> {
             code,
             name: code.name(),
             exponent: code.exponent(),
-            can_send: code.can_send(),
             payout_rails: {
                 let mut rails: Vec<_> = state
                     .payouts

@@ -2,7 +2,7 @@
 
 **Applies to:** SatsBridge PRD v1.0
 **Status:** Proposed
-**Scope:** Add NGN as a destination (payout) currency. NGN as a source currency is out of scope for this addendum.
+**Scope:** Add NGN as a destination (payout) currency. NGN is also supported as a source currency (a sender paying in Naira); the quote engine treats every currency as a valid source.
 
 ## A.1 Summary
 
@@ -18,6 +18,7 @@ Tando's coverage is centred on Kenya / M-Pesa, so NGN needs its own adapter behi
 | XAF | NGN | Central Africa (CEMAC) → Nigeria |
 | GNF | NGN | Guinea → Nigeria |
 | KES | NGN | Kenya → Nigeria |
+| NGN | KES, XOF, XAF, GNF | Nigeria → elsewhere (NGN as source) |
 
 For the demo, pick **one** of these (XOF → NGN is the most natural regional story) and treat the others as config.
 
