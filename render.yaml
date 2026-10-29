@@ -16,6 +16,12 @@ services:
       # Demo only: mounts the mock payout simulator so test payments can be completed.
       - key: DEV_ROUTES
         value: "true"
+      # HMAC secret for /api/v1/webhooks/provider. Required: the service won't start without it.
+      - key: PROVIDER_WEBHOOK_SECRET
+        generateValue: true
+      # Bearer token for /api/v1/admin/*. Admin routes are disabled when empty.
+      - key: ADMIN_API_KEY
+        generateValue: true
       - key: LNBITS_URL
         sync: false
       - key: LNBITS_INVOICE_KEY
