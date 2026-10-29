@@ -22,6 +22,7 @@ import type { CreateQuoteInput } from '@/lib/api';
 import type { CurrencyInfo, Currency, Quote, Rail } from '@/lib/api/schemas';
 import { formatMinor, parseMinor, toInputText } from '@/lib/money';
 import { RAIL_LABELS } from '@/lib/rails';
+import { receivableCurrencies } from '@/lib/currencies';
 
 export interface SendPrefill {
   sourceCurrency: Currency;
@@ -281,7 +282,7 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
         open={sheet === 'destination'}
         onClose={() => setSheet(null)}
         title="Receive currency"
-        currencies={currencies}
+        currencies={receivableCurrencies(currencies)}
         selected={destinationCode}
         onSelect={(code) => {
           setDestinationCode(code as Currency);
