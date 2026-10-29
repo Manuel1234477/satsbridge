@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light mode colors */
+    --background: #ffffff;
+    --foreground: #111827;
+    --card: #f9fafb;
+    --card-foreground: #111827;
+    --muted: #6b7280;
+    --muted-foreground: #4b5563;
+    --input-border: #e5e7eb;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: #030712;
+      --foreground: #f9fafb;
+      --card: #111827;
+      --card-foreground: #f9fafb;
+      --muted: #9ca3af;
+      --muted-foreground: #d1d5db;
+      --input-border: #374151;
+    }
+  }
+
+  body {
+    @apply bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-50;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  input, textarea, select {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .container-safe {
+    @apply max-w-2xl mx-auto px-4 py-6;
+  }
+
+  .form-input {
+    @apply w-full px-3 py-2 border border-neutral-200 dark:border-neutral-700 rounded-lg
+      bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-50
+      focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
+      dark:focus:ring-offset-neutral-950 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium
+      transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800
+      dark:bg-primary-500 dark:hover:bg-primary-600;
+  }
+
+  .btn-secondary {
+    @apply btn bg-neutral-100 text-neutral-900 hover:bg-neutral-200
+      dark:bg-neutral-800 dark:text-neutral-50 dark:hover:bg-neutral-700;
+  }
+
+  .btn-ghost {
+    @apply btn text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-950;
+  }
+
+  .card {
+    @apply rounded-lg border border-neutral-200 dark:border-neutral-800
+      bg-white dark:bg-neutral-900 shadow-sm;
+  }
+
+  .card-content {
+    @apply p-4 sm:p-6;
+  }
+
+  .text-muted {
+    @apply text-neutral-600 dark:text-neutral-400;
+  }
+
+  .text-error {
+    @apply text-error-600 dark:text-error-500;
+  }
+
+  .text-success {
+    @apply text-success-600 dark:text-success-500;
+  }
+
+  .fade-in {
+    @apply animate-fade-in;
+  }
+
+  .slide-up {
+    @apply animate-slide-up;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    @apply !transition-none !animate-none;
+  }
+}
+
+/* Scrollbar styles */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-neutral-100 dark:bg-neutral-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-neutral-300 dark:bg-neutral-700 rounded;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-neutral-400 dark:bg-neutral-600;
+}
