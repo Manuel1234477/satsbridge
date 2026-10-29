@@ -7,7 +7,7 @@ Written for: the presenter and one judge watching the screen.
 - Run the app in mock mode, so the demo works with no backend, no LNbits and no network:
 
   ```bash
-  cd frontend
+  cd web
   NEXT_PUBLIC_MOCK_API=true npm run dev
   ```
 

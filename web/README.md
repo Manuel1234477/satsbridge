@@ -1,4 +1,6 @@
-# SatsBridge frontend
+# SatsBridge web app (Next.js)
+
+This is one of two frontends in the repo. `../frontend/` holds a separate Vite + React app. This one lives in `web/`.
 
 Sender web app for SatsBridge: pick a currency pair, get a live quote, confirm the recipient, pay a Lightning invoice, and follow the payment to receipt. Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4, TanStack Query and Zod.
 
@@ -59,7 +61,7 @@ The backend refuses to start unless LNbits is reachable with valid keys. Its quo
 ## Setup
 
 ```bash
-cd frontend
+cd web
 cp .env.example .env.local   # then adjust
 npm install --legacy-peer-deps
 npm run dev                  # http://localhost:3000
