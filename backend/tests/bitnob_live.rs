@@ -16,6 +16,7 @@ fn env(key: &str) -> Option<String> {
 }
 
 #[tokio::test]
+#[ignore = "live: calls the real Bitnob API; run with `-- --ignored`"]
 async fn bitnob_credentials_corridors_and_fields() {
     dotenvy::dotenv().ok();
     let (Some(client_id), Some(client_secret)) = (env("BITNOB_CLIENT_ID"), env("BITNOB_CLIENT_SECRET")) else {

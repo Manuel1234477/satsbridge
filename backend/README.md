@@ -27,11 +27,11 @@ Two opt-in tests run against real services. They are skipped when the variables 
 ```bash
 # Read-only: Bitnob credentials (sandbox/production), limits, bank list and field rules for
 # each country in BITNOB_COUNTRIES. Uses BITNOB_* from .env. Also works against the local sandbox.
-cargo test --test bitnob_live -- --nocapture
+cargo test --test bitnob_live -- --ignored --nocapture
 
 # Receives and sends 21 sats on a real LNbits (needs two wallets on the same instance).
 LNBITS_TEST_URL=... LNBITS_TEST_INVOICE_KEY=... LNBITS_TEST_ADMIN_KEY=... \
-LNBITS_TEST_PAYEE_INVOICE_KEY=... cargo test --test lnbits_live -- --nocapture
+LNBITS_TEST_PAYEE_INVOICE_KEY=... cargo test --test lnbits_live -- --ignored --nocapture
 ```
 
 ## Providers
