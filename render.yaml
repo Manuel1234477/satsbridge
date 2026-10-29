@@ -6,12 +6,8 @@ services:
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile
-    plan: starter # persistent disks need a paid plan
+    plan: free # no persistent disk on the free plan: the SQLite database resets on every deploy and restart
     healthCheckPath: /api/v1/health
-    disk:
-      name: satsbridge-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: MOCK_PAYOUTS
         value: "true"
