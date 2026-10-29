@@ -35,6 +35,13 @@ const EXPONENT: Record<Currency, number> = { XOF: 0, XAF: 0, GNF: 0, KES: 2, NGN
 // Approximate USD value of one major unit, for demo rates only.
 const USD_PER_MAJOR: Record<Currency, number> = { XOF: 0.00166, XAF: 0.00166, GNF: 0.000116, KES: 0.0077, NGN: 0.00066 };
 
+const MOBILE_OPERATORS = [
+  { code: 'ORANGE', name: 'Orange Money', kind: 'mobile_money' },
+  { code: 'MTN', name: 'MTN MoMo', kind: 'mobile_money' },
+  { code: 'WAVE', name: 'Wave', kind: 'mobile_money' },
+  { code: 'MOOV', name: 'Moov Money', kind: 'mobile_money' },
+];
+
 const BANKS = [
   { code: '058', name: 'GTBank', kind: 'bank' },
   { code: '044', name: 'Access Bank', kind: 'bank' },
@@ -90,6 +97,9 @@ interface MockRecipient {
   resolution_id?: string;
   address?: string;
   phone_number?: string;
+  country?: string;
+  provider_code?: string;
+  account_name?: string;
 }
 
 interface MockPayment {
@@ -320,7 +330,7 @@ function payoutSnapshot(
   completedAtMs: number | null,
   failureReason: string | null,
 ): NonNullable<Derived['payout']> {
-  const provider = p.recipient_rail === 'NG_BANK_TRANSFER' ? 'mock-nip' : p.recipient_rail === 'KE_MOBILE_MONEY' ? 'mock-mpesa' : 'mock-lnurl';
+  const provider = p.recipient_rail === 'NG_BANK_TRANSFER' ? 'mock-nip' : p.recipient_rail === 'KE_MOBILE_MONEY' ? 'mock-mpesa' : p.recipient_rail === 'MOBILE_MONEY' ? 'mock-momo' : 'mock-lnurl';
   return {
     payment_intent_id: p.id,
     provider,
@@ -420,7 +430,6 @@ function currencyList() {
     code,
     name: names[code],
     exponent: EXPONENT[code],
-    can_send: code !== 'NGN',
     payout_rails: rails[code],
   }));
 }
@@ -433,7 +442,6 @@ function computeQuote(input: {
   rail?: Rail;
 }, nowMs: number, userId: string): MockQuote | Response {
   const { source_currency: src, destination_currency: dst, amount, amount_side: side } = input;
-  if (src === 'NGN') return mockError(400, 'validation_error', 'NGN cannot be sent in this demo.');
   const dstInfo = currencyList().find((c) => c.code === dst);
   const rail = dstInfo?.payout_rails.find((r) => r.rail === (input.rail ?? dstInfo.payout_rails[0]?.rail));
   if (!dstInfo || !rail) return mockError(400, 'validation_error', 'Unsupported payout method.');
@@ -509,7 +517,7 @@ function publicQuote(q: MockQuote) {
 
 function recipientKey(r: MockRecipient): string {
   if (r.rail === 'NG_BANK_TRANSFER') return r.account_number ?? '';
-  if (r.rail === 'KE_MOBILE_MONEY') return r.phone_number ?? '';
+  if (r.rail === 'KE_MOBILE_MONEY' || r.rail === 'MOBILE_MONEY') return r.phone_number ?? '';
   if (r.rail === 'LIGHTNING_ADDRESS') return (r.address ?? '').toLowerCase();
   return '';
 }
@@ -517,6 +525,7 @@ function recipientKey(r: MockRecipient): string {
 function maskedRecipient(r: MockRecipient): string {
   if (r.rail === 'NG_BANK_TRANSFER') return `${r.bank_code}:${mask(r.account_number ?? '')}`;
   if (r.rail === 'KE_MOBILE_MONEY') return mask(r.phone_number ?? '');
+  if (r.rail === 'MOBILE_MONEY') return `${(r.country ?? '').toUpperCase()}:${r.provider_code ?? ''}:${mask(r.phone_number ?? '')}`;
   return (r.address ?? '').toLowerCase();
 }
 
@@ -577,6 +586,7 @@ export async function mockRespond(method: string, path: string, body: unknown, t
   if (route.name === 'currencies') return json(currencyList());
   if (route.name === 'institutions') {
     const currency = url.searchParams.get('currency');
+    if (currency === 'XOF' || currency === 'XAF') return json(MOBILE_OPERATORS.map((o) => ({ ...o })));
     if (currency !== 'NGN') return json([]);
     return json(BANKS.map((b) => ({ ...b })));
   }
@@ -651,6 +661,12 @@ export async function mockRespond(method: string, path: string, body: unknown, t
         return mockError(422, 'invalid_recipient', 'Verify the account again before paying.');
       }
       recipientName = resolution.account_name;
+    }
+    if (recipient.rail === 'MOBILE_MONEY') {
+      if (!/^\d{8,12}$/.test(recipient.phone_number ?? '') || !recipient.country || !recipient.provider_code) {
+        return mockError(422, 'invalid_recipient', 'Mobile money details are not valid.');
+      }
+      recipientName = recipient.account_name?.trim() || null;
     }
     if (recipient.rail === 'LIGHTNING_ADDRESS' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(recipient.address ?? '')) {
       return mockError(422, 'invalid_recipient', 'Lightning Address is not valid.');
