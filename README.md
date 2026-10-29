@@ -5,7 +5,7 @@ Cross-border payments between African currencies, settled over Bitcoin's Lightni
 A sender picks a currency pair and an amount, gets a quote, and pays a Lightning invoice. SatsBridge then pays the recipient in their local currency through a local payout rail. Bitcoin is the settlement layer underneath. The sender and recipient only ever see their own currencies.
 
 **Currencies:** XOF, XAF, GNF, KES, NGN
-**Status:** hackathon MVP. The backend is built and tested; the web frontend is a first version. The API has been run end to end with the local stand-ins; the UI has not been driven in a browser yet. Sandbox and demo use only. See [Implementation status](docs/implementation-status.md).
+**Status:** hackathon MVP. The backend is built and tested; there is no frontend in this repo. The API has been run end to end with the local stand-ins. Sandbox and demo use only. See [Implementation status](docs/implementation-status.md).
 
 ## How a payment flows
 
@@ -27,7 +27,6 @@ Quote (live BTC rates) → Payment → Lightning invoice (LNbits) → Settled �
 
 | Path | Contents |
 |---|---|
-| [`frontend/`](frontend/) | React web app for senders: quote, pay with a Lightning QR code, track, refund. See the [frontend README](frontend/README.md). |
 | [`backend/`](backend/) | Rust API (axum, tokio, sqlx/SQLite) and a local Bitnob stand-in. Setup, configuration, API reference and demo scripts are in the [backend README](backend/README.md). |
 | [`docs/implementation-status.md`](docs/implementation-status.md) | What is built, what has been verified against live services, and what's left |
 | [`docs/prd-addendum-ngn-payout.md`](docs/prd-addendum-ngn-payout.md) | Requirements for Naira payouts |

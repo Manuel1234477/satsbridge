@@ -1,7 +1,7 @@
 # SatsBridge — Implementation Status
 
 **As of:** 2026-10-28
-**Scope:** Backend (`backend/`) and a first version of the web frontend (`frontend/`, see its README). The frontend builds and typechecks and the API behind it has been run end to end with the local stand-ins (payment, payout, failure and refund). The UI itself has not been driven in a browser yet.
+**Scope:** Backend (`backend/`). The API has been run end to end with the local stand-ins (payment, payout, failure and refund).
 **Build:** compiles with no warnings, clippy clean, 71 automated tests passing (`cargo test`: 44 unit, 27 end-to-end), plus 2 opt-in live tests that skip without credentials.
 **Related docs:** PRD v1.0 · [NGN payout addendum](prd-addendum-ngn-payout.md) · [backend README](../backend/README.md) (setup, API, demo script)
 
@@ -240,6 +240,5 @@ All settings are in `backend/.env.example` and the [backend README](../backend/R
 - The Lightning Address adapter's note that a real node must refuse to pay the same idempotency key twice. LNbits did behave correctly in the live test.
 
 **Product**
-- Frontend: first version built (send, pay, history). Still needs a browser run-through, tests, and an admin dashboard.
 
 **Compliance:** demo and sandbox only. Production needs a licensed payout partner relationship, KYC/AML, and legal review (PRD §14).
