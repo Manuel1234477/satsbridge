@@ -2,19 +2,20 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, ExternalLink, Printer } from 'lucide-react';
 import { LightningQr } from '@/components/QrCode';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { useCountdown } from '@/hooks/useCountdown';
 import { useCurrencies } from '@/hooks/useCurrencies';
 import { usePaymentDetails } from '@/hooks/usePayment';
-import { payPayment, refundPayment, simulatePayout } from '@/lib/api';
+import { getPayoutInstitutions, payPayment, refundPayment, simulatePayout } from '@/lib/api';
 import type { ApiError } from '@/lib/api/errors';
 import type { CurrencyInfo, PaymentDetails, PaymentStatus } from '@/lib/api/schemas';
 import { formatMinor, formatWithCode } from '@/lib/money';
 import { TRACKER_STEPS, activeStepIndex, isReversal } from '@/lib/payment-status';
 import { RAIL_LABELS } from '@/lib/rails';
+import { formatRecipientAccount } from '@/lib/recipient-display';
 
 const TRACKER_LABELS = ['Payment received', 'Converting', 'Paying recipient', 'Delivered'];
 const PRE_PAYMENT: PaymentStatus[] = ['CREATED', 'QUOTED', 'AWAITING_PAYMENT'];
@@ -369,6 +370,13 @@ function Refunded({ payment }: { payment: PaymentDetails }) {
 
 function Receipt({ payment, currencies }: { payment: PaymentDetails; currencies: CurrencyInfo[] }) {
   const payout = payment.payout;
+  const showsInstitution = payment.recipient_rail === 'NG_BANK_TRANSFER' || payment.recipient_rail === 'MOBILE_MONEY';
+  const institutions = useQuery({
+    queryKey: ['institutions', payment.destination_currency, payment.recipient_rail],
+    queryFn: () => getPayoutInstitutions(payment.destination_currency, payment.recipient_rail),
+    enabled: showsInstitution,
+    staleTime: 60 * 60 * 1000,
+  });
   return (
     <section aria-labelledby="receipt" className="card flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -389,7 +397,7 @@ function Receipt({ payment, currencies }: { payment: PaymentDetails; currencies:
         <Row label="Fee" value={`${payment.fee_sats.toLocaleString('en-US')} sats`} />
         <Row label="Rate" value={`1 ${payment.source_currency} ≈ ${payment.exchange_rate} ${payment.destination_currency}`} />
         <Row label="Recipient" value={payment.recipient_name ?? 'Not checked'} />
-        <Row label="Account" value={payment.recipient_masked} />
+        <Row label="Account" value={formatRecipientAccount(payment.recipient_masked, payment.recipient_rail, institutions.data)} />
         <Row label="Method" value={RAIL_LABELS[payment.recipient_rail]} />
         {payout?.provider_reference && <Row label="Reference" value={payout.provider_reference} />}
         <Row label="Created" value={new Date(payment.created_at).toLocaleString()} />
