@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { CurrencyInfoSchema, PaymentDetailsSchema, PaymentIntentSchema, PayResponseSchema, QuoteSchema, RecipientResolutionSchema, UserSchema } from './schemas';
+import { CurrencyInfoSchema, PayoutInstitutionSchema, PaymentDetailsSchema, PaymentIntentSchema, PayResponseSchema, QuoteSchema, RecipientResolutionSchema, UserSchema } from './schemas';
 
 type MockModule = typeof import('./mock');
 let mock: MockModule;
@@ -52,6 +52,16 @@ describe('mock API', () => {
     expect(ok.status).toBe(201);
     expect(PaymentIntentSchema.safeParse(ok.data).success).toBe(true);
     expect(ok.data.recipient_masked).toBe('SN:WAVE:*****4567');
+  });
+
+  it('requires a country for mobile money operators, like the backend', async () => {
+    const missing = await call('GET', '/payout-institutions?currency=XOF&rail=MOBILE_MONEY', undefined);
+    expect(missing.status).toBe(422);
+    expect((missing.data.error as { code: string }).code).toBe('invalid_recipient');
+    const withCountry = await call('GET', '/payout-institutions?currency=XOF&rail=MOBILE_MONEY&country=SN', undefined);
+    expect(withCountry.status).toBe(200);
+    expect(PayoutInstitutionSchema.array().safeParse(withCountry.data).success).toBe(true);
+    expect((withCountry.data as unknown as unknown[]).length).toBeGreaterThan(0);
   });
 
   it('rejects requests without a valid token', async () => {
