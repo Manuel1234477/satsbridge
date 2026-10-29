@@ -239,6 +239,4 @@ All settings are in `backend/.env.example` and the [backend README](../backend/R
 - Use a keyed hash (with a dedicated secret) for stored account-number hashes (`security::hash_account`).
 - The Lightning Address adapter's note that a real node must refuse to pay the same idempotency key twice. LNbits did behave correctly in the live test.
 
-**Product**
-
 **Compliance:** demo and sandbox only. Production needs a licensed payout partner relationship, KYC/AML, and legal review (PRD §14).
