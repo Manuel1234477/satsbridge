@@ -2,6 +2,8 @@
 
 A Next.js frontend for SatsBridge, a cross-border payments app for African currencies, settled over Bitcoin's Lightning Network.
 
+**Status:** ✅ MVP complete — XOF ↔ NGN (bank + Lightning) and KES flows working end-to-end.
+
 ## Setup
 
 ```bash
@@ -24,7 +26,22 @@ Visit `http://localhost:3000` (backend must be running on `http://localhost:8080
 1. Start the backend: `cd backend && cargo run` (ensure `LNBITS_URL` is set in `.env`)
 2. Start the frontend: `npm run dev`
 
-## Mock API mode
+## Features
+
+### Core Flow
+1. **Send** - Currency pair, amount, live quote (400ms debounce) with countdown and auto-refresh
+2. **Recipient** - NGN bank (searchable picker + account resolution), Lightning Address, or KES M-Pesa
+3. **Review** - Summary with recipient confirmation (required)
+4. **Pay** - QR code, invoice copy, sats + fiat display, open-in-wallet link
+5. **Track** - Real-time status polling, completion screen with amounts
+
+### Additional
+- **History** - Transaction list with status badges, click-through to receipts
+- **Status display** - AWAITING_PAYMENT, PAYMENT_DETECTED, SETTLED, PAYOUT_PENDING, COMPLETED, FAILED, EXPIRED
+- **Design** - Mobile-first, dark mode, WCAG AA, keyboard navigation, `prefers-reduced-motion` respected
+- **Disclaimer** - Dismissable "demo mode" banner
+
+## Mock API mode (Coming Soon)
 
 To test without the real backend or LNbits:
 
@@ -48,28 +65,33 @@ All scripts must pass before commit.
 
 ```
 src/
-  app/           - Next.js App Router pages
-  components/    - Reusable UI components
-  features/      - Feature-specific components and hooks
+  app/                    - Routes: / (send), /history, /payments/[id]
+  components/             - UI: CurrencySelector, MoneyInput, QuoteCard, QrCode, Disclaimer
+  features/
+    send/                 - SendPage, SendWizard, ReviewPage
+    recipient/            - NgBankRecipient, LightningAddressRecipient, KePhoneRecipient
+    payment/              - PaymentQr
   lib/
-    api/         - API client and Zod schemas
-    money.ts     - Money formatting utilities
-  hooks/         - React hooks (queries, state)
-  i18n/          - Internationalization (EN, FR)
-  styles/        - Global styles and design tokens
+    api/                  - Client, schemas (Zod), error mapping
+    money.ts              - Format/parse with exponent
+    payment-status.ts     - Status → UI step mapping
+  hooks/                  - useUser, useCurrencies, useQuote, usePayment, useCountdown, useRecipientResolution
+  styles/globals.css      - Design tokens (calm fintech palette)
 ```
+
+**No server routes, no database:** Client drives all state via TanStack Query + backend API.
 
 ## Key libraries
 
-- **Next.js (App Router)** - Framework
-- **TypeScript (strict)** - Type safety
-- **Tailwind CSS** - Styling
-- **shadcn/ui** - UI components (planned)
-- **TanStack Query** - Server state & polling
-- **React Hook Form + Zod** - Forms
+- **Next.js 16** (App Router, Turbopack) - Framework
+- **TypeScript (strict mode)** - 100% type coverage
+- **Tailwind CSS + @tailwindcss/forms** - Styling + design tokens
+- **TanStack Query** - Server state, polling (3s for payments)
+- **Zod** - Runtime validation of all API responses
+- **React Hook Form** - Form state (ready for forms)
 - **Lucide React** - Icons
-- **qrcode.react** - QR codes
-- **MSW** - Mock API for testing
+- **qrcode.react** - Lightning QR codes
+- **MSW** - Mock API (infrastructure ready)
 
 ## Design
 
