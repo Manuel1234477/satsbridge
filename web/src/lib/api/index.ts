@@ -32,9 +32,11 @@ export function getCurrencies(): Promise<CurrencyInfo[]> {
   });
 }
 
-export function getPayoutInstitutions(currency: Currency, rail?: Rail): Promise<PayoutInstitution[]> {
+// Mobile money operators are per country: the backend rejects MOBILE_MONEY lookups without one.
+export function getPayoutInstitutions(currency: Currency, rail?: Rail, country?: string): Promise<PayoutInstitution[]> {
   const params = new URLSearchParams({ currency });
   if (rail) params.set('rail', rail);
+  if (country) params.set('country', country);
   return apiRequest({
     method: 'GET',
     path: `/payout-institutions?${params.toString()}`,

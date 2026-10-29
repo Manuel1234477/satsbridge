@@ -586,6 +586,9 @@ export async function mockRespond(method: string, path: string, body: unknown, t
   if (route.name === 'currencies') return json(currencyList());
   if (route.name === 'institutions') {
     const currency = url.searchParams.get('currency');
+    if (url.searchParams.get('rail') === 'MOBILE_MONEY' && !url.searchParams.get('country')) {
+      return mockError(422, 'invalid_recipient', 'invalid recipient: country is required for mobile money operators');
+    }
     if (currency === 'XOF' || currency === 'XAF') return json(MOBILE_OPERATORS.map((o) => ({ ...o })));
     if (currency !== 'NGN') return json([]);
     return json(BANKS.map((b) => ({ ...b })));

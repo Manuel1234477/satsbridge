@@ -28,8 +28,9 @@ export function MobileMoneyRecipient({ currency, countries, onConfirm }: MobileM
   const [name, setName] = useState('');
 
   const operators = useQuery({
-    queryKey: ['institutions', currency, 'MOBILE_MONEY'],
-    queryFn: () => getPayoutInstitutions(currency, 'MOBILE_MONEY'),
+    queryKey: ['institutions', currency, 'MOBILE_MONEY', country],
+    queryFn: () => getPayoutInstitutions(currency, 'MOBILE_MONEY', country),
+    enabled: country !== '',
     staleTime: 60 * 60 * 1000,
   });
 
@@ -45,7 +46,10 @@ export function MobileMoneyRecipient({ currency, countries, onConfirm }: MobileM
           <label htmlFor="mm-country" className="label">
             Recipient&apos;s country
           </label>
-          <select id="mm-country" className="field" value={country} onChange={(e) => setCountry(e.target.value)}>
+          <select id="mm-country" className="field" value={country} onChange={(e) => {
+              setCountry(e.target.value);
+              setOperator('');
+            }}>
             <option value="">Select a country</option>
             {countries.map((c) => (
               <option key={c} value={c}>
