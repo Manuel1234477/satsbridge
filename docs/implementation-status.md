@@ -36,7 +36,7 @@ flowchart LR
     P --> R{Payout registry<br/>by currency + rail}
     R --> BN[Bitnob: NG bank transfer, mobile money]
     R --> TP[Tapnob: Lightning Address]
-    R --> MK[Mocks: Tando KES, NGN, XOF/XAF mobile money]
+    R --> MK[Mocks: Tando KES, NGN, XOF/XAF/GNF mobile money]
     BN -. signed webhook .-> API
     TP -->|pays invoice via| LN
     RW[Recovery worker] -->|retry, reconcile, refund check| P
@@ -90,7 +90,7 @@ flowchart LR
 | Payout recovery | ✅ | Worker resubmits unsubmitted payouts (after asking the provider whether an earlier attempt paid), asks about payouts with no webhook, and resolves refunds with unknown outcome. Rails that can't be checked go to manual review |
 | Admin API | ✅ | `ADMIN_API_KEY`: summary metrics (completion rate, timings, corridors), payment list with `needs_review` filter, retry, fail-payout, refund, run-recovery |
 | Rate limiting | ✅ | Per user, per IP on public routes, and per IP on sign-ups; in memory, so per instance |
-| Mobile money corridors | ✅ built, 🟡 unverified | Bitnob `MOBILE_MONEY` for KE, SN, CI, NE, CM and others; field names are read from Bitnob at startup. Mock for XOF and XAF |
+| Mobile money corridors | ✅ built, 🟡 unverified | Bitnob `MOBILE_MONEY` for KE, SN, CI, NE, CM and others; field names are read from Bitnob at startup. Mock for XOF, XAF and GNF |
 | CORS allowlist | ✅ | `CORS_ALLOWED_ORIGINS`; with none set, only `DEV_ROUTES` allows browsers |
 
 ## 4. Payment lifecycle

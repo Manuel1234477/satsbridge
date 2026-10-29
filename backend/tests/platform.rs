@@ -587,3 +587,35 @@ async fn xof_to_xaf_mobile_money() {
     assert_eq!(details["recipient_name"], "Jean Mbarga");
     assert_eq!(details["recipient_masked"], "CM:MTN:*****3456");
 }
+
+#[tokio::test]
+async fn xof_to_gnf_mobile_money() {
+    let app = app_with(120).await;
+    let (_, operators) = app
+        .raw(
+            Method::GET,
+            "/api/v1/payout-institutions?currency=GNF&rail=MOBILE_MONEY&country=GN",
+            None,
+            None,
+        )
+        .await;
+    assert!(operators.as_array().unwrap().iter().any(|o| o["code"] == "ORANGE"));
+
+    let quote = app
+        .quote(json!({ "source_currency": "XOF", "destination_currency": "GNF", "amount": 100_000 }))
+        .await;
+    assert_eq!(quote["destination_rail"], "MOBILE_MONEY", "only rail for GNF");
+
+    let id = app
+        .create_payment(
+            &quote,
+            json!({ "rail": "MOBILE_MONEY", "country": "GN", "provider_code": "ORANGE", "phone_number": "622123456", "account_name": "Mamadou Diallo" }),
+        )
+        .await;
+    let invoice = app.invoice_for(&id).await;
+    app.pay_and_notify(&invoice["payment_hash"]).await;
+    app.mock_payout(&id, "success").await;
+    let details = app.status_of(&id).await;
+    assert_eq!(details["status"], "COMPLETED");
+    assert_eq!(details["recipient_masked"], "GN:ORANGE:*****3456");
+}

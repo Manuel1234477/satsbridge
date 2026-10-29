@@ -105,6 +105,7 @@ pub async fn build(
     payouts.register(ngn.clone());
     payouts.register(Arc::new(MockMobileMoneyAdapter::new(Currency::Xof)));
     payouts.register(Arc::new(MockMobileMoneyAdapter::new(Currency::Xaf)));
+    payouts.register(Arc::new(MockMobileMoneyAdapter::new(Currency::Gnf)));
     let node = Arc::new(TestNode::default());
     customize(&mut config, &mut payouts, &node);
     let pool = connect(&config.database_url).await.unwrap();
