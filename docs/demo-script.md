@@ -13,7 +13,6 @@ Written for: the presenter and one judge watching the screen.
 
   Open http://localhost:3000 in Chrome, window about 390 px wide (phone view) or full width.
 - Start from a fresh browser profile or clear `localStorage` for `localhost:3000`, so the first quote and sign-up are clean.
-- Have this ready to paste into the refund box, after the payout fails: nothing extra. The refund amount is shown on screen and the demo uses it.
 
 Mock timings at normal speed: the sender's payment is detected 8 s after the invoice is shown, the payout starts at 11 s, and the outcome lands at 15 s. A failed payout needs refunding at about 18 s.
 
@@ -55,10 +54,10 @@ Optional, if time allows: type 777 instead of 10000 to show a 5-second quote tha
 
 1. Click **Send money**, or go to `/`, and repeat the flow. Use the same amount, bank and account **0000000000** (any account ending in 0000 fails).
 2. About 18 seconds after the invoice, the banner reads **Refund needed**: "The bank rejected the transfer. Add a Lightning invoice for the same sats to get your money back."
-3. Paste a wrong amount, for example in mock mode `lnbc…` with a different number. Show the server's message: "the refund invoice must be for exactly N sats". Say: "The backend checks the amount, so a wrong invoice cannot lose money."
+3. Paste a wrong amount: `lnbc<N×10+1>n1mock`, where N is the sats shown on screen (for 25,539 sats, paste `lnbc255391n1mock`). Show the server's message: "the refund invoice must be for exactly N sats". Say: "The backend checks the amount, so a wrong invoice cannot lose money."
 4. Paste the correct invoice. The screen shows **Refunded** with the time and the sats refunded.
 
-   Note for the presenter: in mock mode, the invoice format is `lnbc<sats×10>n1…`. The refund box shows the exact number to match. For example, if it says 25,539 sats, paste `lnbc255390n1mock…` (the mock reads `n` as 100 msat, so `sats × 10` n gives the exact amount).
+   Note for the presenter: the mock reads the BOLT11 amount, where `n` is 100 msat. For 25,539 sats, the exact invoice is `lnbc255390n1mock`.
 
 ## 2:50 to 3:00: Close
 
