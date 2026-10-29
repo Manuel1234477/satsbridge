@@ -1,52 +1,60 @@
 'use client';
 
 import { useState } from 'react';
+import type { RecipientDraft } from './types';
+import { maskTail } from './types';
 
 interface KePhoneRecipientProps {
-  onSubmit: (phoneNumber: string) => void;
+  onConfirm: (draft: RecipientDraft) => void;
 }
 
-export function KePhoneRecipient({ onSubmit }: KePhoneRecipientProps) {
+// Accepts 07XXXXXXXX / 01XXXXXXXX or +2547XXXXXXXX; sends the 10-digit local form.
+function normalize(input: string): string | null {
+  const digits = input.replace(/\D/g, '');
+  if (/^0[17]\d{8}$/.test(digits)) return digits;
+  if (/^254[17]\d{8}$/.test(digits)) return `0${digits.slice(3)}`;
+  return null;
+}
+
+export function KePhoneRecipient({ onConfirm }: KePhoneRecipientProps) {
   const [phone, setPhone] = useState('');
-
-  const formatPhone = (value: string): string => {
-    const digits = value.replace(/\D/g, '');
-    if (digits.startsWith('254')) return '+' + digits;
-    if (digits.startsWith('0')) return '+254' + digits.slice(1);
-    return '+254' + digits;
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const digits = e.target.value.replace(/\D/g, '').slice(0, 12);
-    setPhone(digits);
-  };
-
-  const isValid = phone.replace(/\D/g, '').length === 10 || phone.replace(/\D/g, '').length === 12;
-  const displayPhone = formatPhone(phone);
+  const normalized = normalize(phone);
 
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <label className="block text-sm font-medium">Phone number</label>
+        <label htmlFor="ke-phone" className="block text-sm font-medium">
+          M-Pesa phone number
+        </label>
         <input
+          id="ke-phone"
           type="tel"
+          inputMode="tel"
+          autoComplete="off"
           placeholder="0712 345 678"
           value={phone}
-          onChange={handleChange}
+          onChange={(e) => setPhone(e.target.value)}
           className="form-input font-mono"
+          aria-describedby="ke-hint"
         />
-        {phone && (
-          <p className="text-xs text-muted">Formatted: {displayPhone}</p>
-        )}
+        <p id="ke-hint" className="text-xs text-muted">
+          Kenyan number: 07 or 01 followed by 8 digits, or +254.
+        </p>
       </div>
-
       <button
         type="button"
-        onClick={() => onSubmit(formatPhone(phone))}
-        disabled={!isValid}
+        disabled={normalized === null}
+        onClick={() =>
+          normalized &&
+          onConfirm({
+            recipient: { rail: 'KE_MOBILE_MONEY', phone_number: normalized },
+            displayName: null,
+            summary: `M-Pesa · ${maskTail(normalized)}`,
+          })
+        }
         className="btn btn-primary w-full"
       >
-        Continue with this number
+        Use this number
       </button>
     </div>
   );

@@ -2,100 +2,62 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { SendPage } from './SendPage';
+import { useQuery } from '@tanstack/react-query';
+import { getPayment } from '@/lib/api';
+import type { CurrencyInfo, Quote, Rail } from '@/lib/api/schemas';
+import { useCurrencies } from '@/hooks/useCurrencies';
+import { SendPage, type SendPrefill } from './SendPage';
 import { ReviewPage } from './ReviewPage';
-import type { Currency, Rail, Recipient } from '@/lib/api/schemas';
 
-export type WizardStep = 'send' | 'recipient' | 'review' | 'payment';
-
-interface WizardState {
-  step: WizardStep;
-  sourceCurrency: Currency | '';
-  destCurrency: Currency | '';
-  sourceAmount: number | null;
-  destAmount: number | null;
-  quoteId: string | null;
-  paymentId: string | null;
-  recipient: Recipient | null;
-  recipientName: string | null;
-  selectedRail: Rail | '';
+interface SendWizardProps {
+  fromPaymentId?: string;
 }
 
-export function SendWizard() {
+export function SendWizard({ fromPaymentId }: SendWizardProps) {
   const router = useRouter();
-  const [state, setState] = useState<WizardState>({
-    step: 'send',
-    sourceCurrency: '',
-    destCurrency: '',
-    sourceAmount: null,
-    destAmount: null,
-    quoteId: null,
-    paymentId: null,
-    recipient: null,
-    recipientName: null,
-    selectedRail: '',
+  const currencies = useCurrencies();
+  const previous = useQuery({
+    queryKey: ['payment', fromPaymentId],
+    queryFn: () => getPayment(fromPaymentId ?? ''),
+    enabled: fromPaymentId !== undefined,
+    retry: false,
   });
+  const [selected, setSelected] = useState<{ quote: Quote; rail: Rail } | null>(null);
 
-  const handleQuoteSelected = (
-    quoteId: string,
-    sourceCurrency: Currency,
-    destCurrency: Currency,
-    sourceAmount: number,
-    destAmount: number,
-    selectedRail: Rail | ''
-  ) => {
-    setState(prev => ({
-      ...prev,
-      step: 'recipient',
-      quoteId,
-      sourceCurrency,
-      destCurrency,
-      sourceAmount,
-      destAmount,
-      selectedRail,
-    }));
-  };
+  if (currencies.isError) {
+    return <p role="alert" className="text-error-700 dark:text-error-300">{currencies.error.message}</p>;
+  }
+  if (!currencies.data || (fromPaymentId && previous.isPending)) {
+    return <p className="text-muted">Loading…</p>;
+  }
 
-  const handleRecipientSelected = (recipient: Recipient, recipientName: string | null) => {
-    setState(prev => ({
-      ...prev,
-      step: 'review',
-      recipient,
-      recipientName,
-    }));
-  };
+  const list: CurrencyInfo[] = currencies.data;
+  const prefill: SendPrefill | undefined =
+    previous.data && previous.data.status === 'EXPIRED'
+      ? {
+          sourceCurrency: previous.data.source_currency,
+          destinationCurrency: previous.data.destination_currency,
+          sourceMinor: previous.data.source_amount,
+        }
+      : undefined;
 
-  const handlePaymentCreated = (paymentId: string) => {
-    setState(prev => ({
-      ...prev,
-      step: 'payment',
-      paymentId,
-    }));
-    router.push(`/payments/${paymentId}`);
-  };
-
-  const handleBack = () => {
-    if (state.step === 'recipient') {
-      setState(prev => ({ ...prev, step: 'send' }));
-    } else if (state.step === 'review') {
-      setState(prev => ({ ...prev, step: 'recipient' }));
-    }
-  };
+  if (selected) {
+    return (
+      <ReviewPage
+        quote={selected.quote}
+        rail={selected.rail}
+        currencies={list}
+        onBack={() => setSelected(null)}
+        onPaid={(id) => router.push(`/payments/${id}`)}
+      />
+    );
+  }
 
   return (
-    <main className="min-h-screen bg-white dark:bg-neutral-950 py-8">
-      {state.step === 'send' && (
-        <SendPage onContinue={handleQuoteSelected} />
-      )}
-      {state.step === 'recipient' && state.quoteId && (
-        <ReviewPage
-          quoteId={state.quoteId}
-          sourceCurrency={state.sourceCurrency as Currency}
-          destCurrency={state.destCurrency as Currency}
-          onPaymentCreated={handlePaymentCreated}
-          onBack={handleBack}
-        />
-      )}
-    </main>
+    <SendPage
+      currencies={list}
+      prefill={prefill}
+      onContinue={(quote, rail) => setSelected({ quote, rail })}
+    />
   );
 }

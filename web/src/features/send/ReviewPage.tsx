@@ -1,222 +1,138 @@
 'use client';
 
 import { useState } from 'react';
-import { useCreatePayment } from '@/hooks/usePayment';
-import { useQuote } from '@/hooks/useQuote';
-import { useCurrencies } from '@/hooks/useCurrencies';
-import { formatMoneyWithCurrency } from '@/lib/money';
+import { ChevronLeft } from 'lucide-react';
+import { useMutation } from '@tanstack/react-query';
+import { createPayment, payPayment } from '@/lib/api';
+import type { ApiError } from '@/lib/api/errors';
+import type { CurrencyInfo, Quote, Rail } from '@/lib/api/schemas';
+import { formatWithCode } from '@/lib/money';
+import { RAIL_LABELS } from '@/lib/rails';
+import { useCountdown } from '@/hooks/useCountdown';
 import { NgBankRecipient } from '@/features/recipient/NgBankRecipient';
 import { LightningAddressRecipient } from '@/features/recipient/LightningAddressRecipient';
 import { KePhoneRecipient } from '@/features/recipient/KePhoneRecipient';
-import { ChevronLeft, AlertCircle, CheckCircle } from 'lucide-react';
-import type { Currency, Recipient, Rail } from '@/lib/api/schemas';
+import type { RecipientDraft } from '@/features/recipient/types';
 
 interface ReviewPageProps {
-  quoteId: string;
-  sourceCurrency: Currency;
-  destCurrency: Currency;
-  onPaymentCreated: (paymentId: string) => void;
+  quote: Quote;
+  rail: Rail;
+  currencies: CurrencyInfo[];
   onBack: () => void;
+  onPaid: (paymentId: string) => void;
 }
 
-export function ReviewPage({
-  quoteId,
-  sourceCurrency,
-  destCurrency,
-  onPaymentCreated,
-  onBack,
-}: ReviewPageProps) {
-  const { data: quote } = useQuote(quoteId);
-  const { data: currencies = [] } = useCurrencies();
-  const createPaymentMutation = useCreatePayment();
+export function ReviewPage({ quote, rail, currencies, onBack, onPaid }: ReviewPageProps) {
+  const [draft, setDraft] = useState<RecipientDraft | null>(null);
+  // Kept across retries so a failed /pay never creates a second payment.
+  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const { isExpired } = useCountdown(quote.expires_at);
 
-  const [step, setStep] = useState<'recipient' | 'confirm'>('recipient');
-  const [recipient, setRecipient] = useState<Recipient | null>(null);
-  const [recipientName, setRecipientName] = useState<string | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
+  const sourceExponent = currencies.find((c) => c.code === quote.source_currency)?.exponent ?? 0;
+  const destinationExponent = currencies.find((c) => c.code === quote.destination_currency)?.exponent ?? 0;
 
-  if (!quote) {
-    return (
-      <div className="container-safe max-w-md">
-        <p className="text-muted text-center">Loading quote...</p>
-      </div>
-    );
-  }
-
-  const getRailRenderer = (rail: Rail) => {
-    switch (rail) {
-      case 'NG_BANK_TRANSFER':
-        return (
-          <NgBankRecipient
-            currency={destCurrency}
-            onResolve={(data) => {
-              setRecipient({
-                rail: 'NG_BANK_TRANSFER',
-                bank_code: data.bank_code,
-                account_number: data.account_number,
-                resolution_id: data.resolution_id,
-              });
-              setRecipientName(data.account_name);
-              setStep('confirm');
-            }}
-          />
-        );
-      case 'LIGHTNING_ADDRESS':
-        return (
-          <LightningAddressRecipient
-            onSubmit={(address) => {
-              setRecipient({
-                rail: 'LIGHTNING_ADDRESS',
-                address,
-              });
-              setRecipientName(null);
-              setStep('confirm');
-            }}
-          />
-        );
-      case 'KE_MOBILE_MONEY':
-        return (
-          <KePhoneRecipient
-            onSubmit={(phoneNumber) => {
-              setRecipient({
-                rail: 'KE_MOBILE_MONEY',
-                phone_number: phoneNumber,
-              });
-              setRecipientName(null);
-              setStep('confirm');
-            }}
-          />
-        );
-      default:
-        return <p className="text-error-600">Unsupported payment method</p>;
-    }
-  };
-
-  const handlePayment = () => {
-    if (!recipient) return;
-
-    createPaymentMutation.mutate(
-      {
-        quote_id: quoteId,
-        recipient,
-      },
-      {
-        onSuccess: (payment) => {
-          onPaymentCreated(payment.id);
-        },
+  const submit = useMutation({
+    mutationFn: async (input: RecipientDraft) => {
+      if (isExpired) throw new Error('quote expired');
+      let id = paymentId;
+      if (!id) {
+        const payment = await createPayment({ quote_id: quote.id, recipient: input.recipient });
+        id = payment.id;
+        setPaymentId(id);
       }
-    );
-  };
+      await payPayment(id);
+      return id;
+    },
+    onSuccess: (id) => onPaid(id),
+  });
+
+  const submitError = submit.error as ApiError | Error | null;
+  const expiredBeforeSubmit = submitError?.message === 'quote expired';
 
   return (
-    <div className="container-safe max-w-md">
-      {/* Header */}
-      <div className="flex items-center gap-2 mb-8">
-        <button
-          onClick={onBack}
-          className="btn btn-ghost p-2"
-          aria-label="Go back"
-        >
-          <ChevronLeft className="w-5 h-5" />
+    <div className="space-y-5">
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={onBack} className="btn btn-ghost p-2" aria-label="Back to amounts">
+          <ChevronLeft className="h-5 w-5" aria-hidden="true" />
         </button>
-        <h1 className="text-2xl font-bold">
-          {step === 'recipient' ? 'Recipient details' : 'Review & confirm'}
-        </h1>
+        <h1 className="text-2xl font-bold">{draft ? 'Review and pay' : 'Who is receiving this?'}</h1>
       </div>
 
-      {/* Recipient input */}
-      {step === 'recipient' && (
-        <div className="card card-content space-y-4">
-          {getRailRenderer(quote.destination_rail)}
-        </div>
+      {!draft && (
+        <section className="card card-content">
+          {rail === 'NG_BANK_TRANSFER' && <NgBankRecipient onConfirm={setDraft} />}
+          {rail === 'LIGHTNING_ADDRESS' && <LightningAddressRecipient onConfirm={setDraft} />}
+          {rail === 'KE_MOBILE_MONEY' && <KePhoneRecipient onConfirm={setDraft} />}
+          {rail === 'MOBILE_MONEY' && <p className="text-sm text-muted">This payout method is not available in this demo.</p>}
+        </section>
       )}
 
-      {/* Review summary */}
-      {step === 'confirm' && recipient && (
-        <div className="space-y-4">
-          <div className="card card-content space-y-4">
+      {draft && (
+        <>
+          <section aria-labelledby="summary" className="card card-content space-y-4">
+            <h2 id="summary" className="sr-only">
+              Payment summary
+            </h2>
             <div>
-              <p className="text-sm text-muted mb-1">You send</p>
-              <p className="text-2xl font-bold">
-                {formatMoneyWithCurrency(quote.source_amount, quote.source_currency)}
+              <p className="text-sm text-muted">You send</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {formatWithCode(quote.source_amount, sourceExponent, quote.source_currency)}
+              </p>
+              <p className="text-xs text-muted">
+                Fee {formatWithCode(quote.fee_source_amount, sourceExponent, quote.source_currency)} included
               </p>
             </div>
-
-            <div className="border-t border-neutral-200 dark:border-neutral-700 pt-4">
-              <p className="text-sm text-muted mb-1">Fee</p>
-              <p className="text-lg font-semibold">
-                {formatMoneyWithCurrency(quote.fee_source_amount, quote.source_currency)}
+            <div className="border-t border-[var(--card-border)] pt-4">
+              <p className="text-sm text-muted">They receive{quote.payout_amount_guaranteed ? '' : ' (estimated)'}</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {formatWithCode(quote.destination_amount, destinationExponent, quote.destination_currency)}
               </p>
             </div>
-
-            <div className="border-t border-neutral-200 dark:border-neutral-700 pt-4">
-              <p className="text-sm text-muted mb-1">They receive</p>
-              <p className="text-2xl font-bold">
-                {formatMoneyWithCurrency(quote.destination_amount, quote.destination_currency)}
-              </p>
-            </div>
-
-            <div className="border-t border-neutral-200 dark:border-neutral-700 pt-4">
-              <p className="text-sm text-muted mb-1">Exchange rate</p>
-              <p className="text-sm">
-                1 {quote.source_currency} = {quote.exchange_rate} {quote.destination_currency}
-              </p>
-            </div>
-          </div>
-
-          {/* Recipient card */}
-          <div className="card card-content">
-            <p className="text-sm text-muted mb-2">Recipient</p>
-            {recipientName ? (
-              <div className="space-y-1">
-                <p className="font-medium">{recipientName}</p>
-                <p className="text-sm text-muted">{quote.destination_rail.replace(/_/g, ' ')}</p>
+            <dl className="space-y-2 border-t border-[var(--card-border)] pt-4 text-sm">
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted">Recipient</dt>
+                <dd className="text-right">{draft.displayName ?? 'Name not checked'}</dd>
               </div>
-            ) : (
-              <p className="text-sm text-muted">{quote.destination_rail.replace(/_/g, ' ')}</p>
-            )}
-          </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted">Paid to</dt>
+                <dd className="text-right">{draft.summary}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted">Method</dt>
+                <dd className="text-right">{RAIL_LABELS[quote.destination_rail]}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted">Rate</dt>
+                <dd className="text-right tabular-nums">
+                  1 {quote.source_currency} ≈ {quote.exchange_rate} {quote.destination_currency}
+                </dd>
+              </div>
+            </dl>
+          </section>
 
-          {/* Error */}
-          {createPaymentMutation.isError && (
-            <div className="flex gap-2 p-3 rounded-lg bg-error-50 dark:bg-error-950 text-error-700 dark:text-error-300">
-              <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-              <p className="text-sm">{createPaymentMutation.error?.message}</p>
-            </div>
+          {isExpired && (
+            <p role="alert" className="rounded-lg bg-warning-50 px-3 py-2 text-sm text-warning-800 dark:bg-warning-950 dark:text-warning-100">
+              This rate has expired, so we cannot take payment on it. Go back to get the latest rate.
+            </p>
+          )}
+          {submitError && (
+            <p role="alert" className="rounded-lg bg-error-50 px-3 py-2 text-sm text-error-700 dark:bg-error-950 dark:text-error-200">
+              {expiredBeforeSubmit ? 'This rate has expired. Go back to get the latest rate.' : submitError.message}
+            </p>
           )}
 
-          {/* Confirm button */}
-          <div className="space-y-2">
-            <button
-              onClick={handlePayment}
-              disabled={createPaymentMutation.isPending || !confirmed}
-              className="btn btn-primary w-full"
-            >
-              {createPaymentMutation.isPending ? 'Creating payment...' : 'Continue to payment'}
-            </button>
-
-            {/* Checkbox for confirmation */}
-            <label className="flex items-start gap-2 p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
-                className="mt-0.5"
-              />
-              <span className="text-sm">
-                I confirm the recipient details are correct.
-              </span>
-            </label>
-          </div>
-
-          {/* Back button */}
           <button
-            onClick={() => setStep('recipient')}
-            className="btn btn-secondary w-full"
+            type="button"
+            onClick={() => submit.mutate(draft)}
+            disabled={isExpired || submit.isPending}
+            className="btn btn-primary w-full py-3 text-base"
           >
+            {submit.isPending ? 'Creating payment…' : paymentId ? 'Try getting the invoice again' : 'Confirm and continue'}
+          </button>
+          <button type="button" onClick={() => setDraft(null)} disabled={submit.isPending} className="btn btn-secondary w-full">
             Change recipient
           </button>
-        </div>
+        </>
       )}
     </div>
   );

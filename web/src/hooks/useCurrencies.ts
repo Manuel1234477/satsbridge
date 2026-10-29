@@ -7,6 +7,6 @@ export function useCurrencies() {
   return useQuery({
     queryKey: ['currencies'],
     queryFn: getCurrencies,
-    staleTime: 1000 * 60 * 60, // 1 hour
+    staleTime: 60 * 60 * 1000,
   });
 }

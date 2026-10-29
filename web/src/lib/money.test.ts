@@ -1,46 +1,56 @@
-import { describe, it, expect } from 'vitest';
-import { formatMoney, parseMoneyInput, getExponent } from './money';
+import { describe, expect, it } from 'vitest';
+import { formatMinor, formatWithCode, parseMinor, toInputText } from './money';
 
-describe('money', () => {
-  describe('getExponent', () => {
-    it('returns 0 for XOF', () => {
-      expect(getExponent('XOF')).toBe(0);
-    });
-
-    it('returns 2 for NGN', () => {
-      expect(getExponent('NGN')).toBe(2);
-    });
+describe('formatMinor', () => {
+  it('formats exponent 0 currencies without decimals', () => {
+    expect(formatMinor(100000, 0)).toBe('100,000');
+    expect(formatMinor(0, 0)).toBe('0');
   });
 
-  describe('formatMoney', () => {
-    it('formats XOF correctly (no decimals)', () => {
-      expect(formatMoney(100000, 'XOF')).toBe('100,000');
-    });
-
-    it('formats NGN correctly (2 decimals)', () => {
-      expect(formatMoney(10050, 'NGN')).toBe('100.50');
-    });
-
-    it('handles zero', () => {
-      expect(formatMoney(0, 'NGN')).toBe('0.00');
-    });
+  it('formats exponent 2 currencies with two decimals', () => {
+    expect(formatMinor(10050, 2)).toBe('100.50');
+    expect(formatMinor(5, 2)).toBe('0.05');
+    expect(formatMinor(123456789, 2)).toBe('1,234,567.89');
   });
 
-  describe('parseMoneyInput', () => {
-    it('parses input with exponent 0', () => {
-      expect(parseMoneyInput('100', 0)).toBe(100);
-    });
+  it('formats negative values', () => {
+    expect(formatMinor(-1050, 2)).toBe('-10.50');
+  });
 
-    it('parses input with exponent 2', () => {
-      expect(parseMoneyInput('100.50', 2)).toBe(10050);
-    });
+  it('appends the currency code', () => {
+    expect(formatWithCode(245000, 2, 'NGN')).toBe('2,450.00 NGN');
+  });
+});
 
-    it('returns null for empty input', () => {
-      expect(parseMoneyInput('', 2)).toBeNull();
-    });
+describe('parseMinor', () => {
+  it('parses whole amounts for exponent 0', () => {
+    expect(parseMinor('1000', 0)).toBe(1000);
+    expect(parseMinor('1,000', 0)).toBe(1000);
+  });
 
-    it('returns null for invalid input', () => {
-      expect(parseMoneyInput('abc', 2)).toBeNull();
-    });
+  it('rejects decimals for exponent 0', () => {
+    expect(parseMinor('10.5', 0)).toBeNull();
+  });
+
+  it('parses two-decimal amounts for exponent 2', () => {
+    expect(parseMinor('10.50', 2)).toBe(1050);
+    expect(parseMinor('10.5', 2)).toBe(1050);
+    expect(parseMinor('10', 2)).toBe(1000);
+  });
+
+  it('rejects empty, malformed and over-precise input', () => {
+    expect(parseMinor('', 2)).toBeNull();
+    expect(parseMinor('abc', 2)).toBeNull();
+    expect(parseMinor('1.234', 2)).toBeNull();
+    expect(parseMinor('-5', 2)).toBeNull();
+  });
+});
+
+describe('toInputText', () => {
+  it('round-trips with parseMinor', () => {
+    expect(toInputText(1050, 2)).toBe('10.50');
+    expect(toInputText(5, 2)).toBe('0.05');
+    expect(toInputText(2450, 0)).toBe('2450');
+    expect(parseMinor(toInputText(1050, 2), 2)).toBe(1050);
   });
 });

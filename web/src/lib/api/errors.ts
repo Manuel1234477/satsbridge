@@ -1,34 +1,41 @@
 export class ApiError extends Error {
-  constructor(
-    public code: string,
-    public message: string,
-    public statusCode: number
-  ) {
+  readonly code: string;
+  readonly statusCode: number;
+  // The server's own message. Shown only where it is specific and safe (e.g. refund invoice amount).
+  readonly detail: string | null;
+
+  constructor(code: string, message: string, statusCode: number, detail: string | null = null) {
     super(message);
     this.name = 'ApiError';
+    this.code = code;
+    this.statusCode = statusCode;
+    this.detail = detail;
   }
 }
 
-const errorMessages: Record<string, string> = {
-  validation_error: 'Please check your input and try again.',
-  not_found: 'This item was not found. It may have been deleted.',
-  conflict: 'This action conflicts with an existing operation.',
-  quote_expired: 'The exchange rate has expired. Please get a new quote.',
-  unauthorized: 'You are not authorized. Please try signing in again.',
-  rate_limited: 'Too many requests. Please slow down and try again in a moment.',
-  invalid_recipient: 'The recipient details are invalid. Please check and try again.',
-  recipient_not_found: 'The recipient could not be found. Please verify the details.',
-  provider_unavailable: 'The payment provider is temporarily unavailable. Please try again later.',
-  provider_rejected: 'The payment provider rejected this request. Please try again or contact support.',
-  invalid_signature: 'Invalid request signature.',
-  internal_error: 'An unexpected error occurred. Please try again or contact support.',
+// Human messages keyed by the backend error codes plus client-side codes.
+// The server's own message is never shown, so the copy stays consistent.
+const MESSAGES: Record<string, string> = {
+  validation_error: 'Please check the details and try again.',
+  not_found: 'We could not find that. It may have been removed.',
+  conflict: 'That action conflicts with the current state of this payment.',
+  quote_expired: 'The exchange rate has expired. We have refreshed it for you.',
+  unauthorized: 'Your session has ended. Please try again.',
+  rate_limited: 'Slow down for a moment, then try again.',
+  invalid_recipient: 'The recipient details are not valid. Please check them.',
+  recipient_not_found: 'We could not verify this account. Please check the details.',
+  provider_unavailable: 'The payout partner is temporarily unavailable. Please try again shortly.',
+  provider_rejected: 'The payout partner rejected this request. Please check the details or try again.',
+  invalid_signature: 'The request could not be verified.',
+  internal_error: 'Something went wrong on our side. Please try again.',
+  offline: 'You appear to be offline. Check your connection and try again.',
+  invalid_response: 'The server sent a response we could not read. Please try again.',
 };
 
 export function getErrorMessage(code: string): string {
-  return errorMessages[code] || 'An unexpected error occurred.';
+  return MESSAGES[code] ?? 'Something went wrong. Please try again.';
 }
 
-export function createApiError(code: string, message: string, statusCode: number): ApiError {
-  const friendlyMessage = getErrorMessage(code);
-  return new ApiError(code, friendlyMessage || message, statusCode);
+export function createApiError(code: string, statusCode: number, detail: string | null = null): ApiError {
+  return new ApiError(code, getErrorMessage(code), statusCode, detail);
 }

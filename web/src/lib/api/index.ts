@@ -1,163 +1,134 @@
-'use client';
-
-import { apiRequest, getStoredToken, setStoredToken, clearStoredToken } from './client';
+import { apiRequest } from './client';
 import {
-  UserSchema,
-  QuoteSchema,
-  PaymentIntentSchema,
-  PaymentDetailsSchema,
   CurrencyInfoSchema,
+  DevPayoutOutcomeSchema,
+  PayResponseSchema,
+  PaymentDetailsSchema,
+  PaymentIntentSchema,
   PayoutInstitutionSchema,
+  QuoteSchema,
   RecipientResolutionSchema,
-  TransactionListSchema,
-  type User,
-  type Quote,
-  type PaymentIntent,
-  type PaymentDetails,
+  type AmountSide,
   type CurrencyInfo,
   type PayoutInstitution,
-  type RecipientResolution,
+  type PayResponse,
+  type PaymentDetails,
+  type PaymentIntent,
+  type Quote,
   type Recipient,
-  type TransactionList,
+  type RecipientResolution,
+  type Currency,
+  type Rail,
 } from './schemas';
 
-// User endpoints
-export async function createUser(contact?: string): Promise<User> {
-  return apiRequest('/users', {
-    method: 'POST',
-    requiresAuth: false,
-    body: contact ? { contact } : {},
-    schema: UserSchema,
-  });
-}
+export { ensureSession, clearStoredToken, getStoredToken } from './client';
 
-// Currency endpoints
-export async function getCurrencies(): Promise<CurrencyInfo[]> {
-  return apiRequest<CurrencyInfo[]>('/currencies', {
+export function getCurrencies(): Promise<CurrencyInfo[]> {
+  return apiRequest({
     method: 'GET',
-    requiresAuth: false,
+    path: '/currencies',
+    auth: false,
     schema: CurrencyInfoSchema.array(),
   });
 }
 
-export async function getPayoutInstitutions(currency: string, rail?: string): Promise<PayoutInstitution[]> {
+export function getPayoutInstitutions(currency: Currency, rail?: Rail): Promise<PayoutInstitution[]> {
   const params = new URLSearchParams({ currency });
-  if (rail) params.append('rail', rail);
-  return apiRequest<PayoutInstitution[]>(`/payout-institutions?${params}`, {
+  if (rail) params.set('rail', rail);
+  return apiRequest({
     method: 'GET',
-    requiresAuth: false,
+    path: `/payout-institutions?${params.toString()}`,
+    auth: false,
     schema: PayoutInstitutionSchema.array(),
   });
 }
 
-// Quote endpoints
-export async function createQuote(input: {
-  source_currency: string;
-  destination_currency: string;
+export interface CreateQuoteInput {
+  source_currency: Currency;
+  destination_currency: Currency;
   amount: number;
-  amount_side?: 'SOURCE' | 'DESTINATION';
-  rail?: string;
-}): Promise<Quote> {
-  return apiRequest<Quote>('/quotes', {
-    method: 'POST',
-    requiresAuth: true,
-    body: input,
-    schema: QuoteSchema,
-  });
+  amount_side: AmountSide;
+  rail?: Rail;
 }
 
-export async function getQuote(id: string): Promise<Quote> {
-  return apiRequest<Quote>(`/quotes/${id}`, {
-    method: 'GET',
-    requiresAuth: true,
-    schema: QuoteSchema,
-  });
+export function createQuote(input: CreateQuoteInput): Promise<Quote> {
+  return apiRequest({ method: 'POST', path: '/quotes', body: input, auth: true, schema: QuoteSchema });
 }
 
-// Recipient endpoints
-export async function resolveRecipient(input: {
-  currency: string;
+export function getQuote(id: string): Promise<Quote> {
+  return apiRequest({ method: 'GET', path: `/quotes/${encodeURIComponent(id)}`, auth: true, schema: QuoteSchema });
+}
+
+export function resolveRecipient(input: {
+  currency: 'NGN';
   bank_code: string;
   account_number: string;
 }): Promise<RecipientResolution> {
-  return apiRequest('/recipients/resolve', {
+  return apiRequest({
     method: 'POST',
-    requiresAuth: true,
+    path: '/recipients/resolve',
     body: input,
+    auth: true,
     schema: RecipientResolutionSchema,
   });
 }
 
-// Payment endpoints
-export async function createPayment(input: {
-  quote_id: string;
-  recipient: Recipient;
-}): Promise<PaymentIntent> {
-  return apiRequest<PaymentIntent>('/payments', {
+export function createPayment(input: { quote_id: string; recipient: Recipient }): Promise<PaymentIntent> {
+  return apiRequest({
     method: 'POST',
-    requiresAuth: true,
+    path: '/payments',
     body: input,
+    auth: true,
     schema: PaymentIntentSchema,
   });
 }
 
-export async function payPayment(id: string): Promise<PaymentDetails> {
-  return apiRequest<PaymentDetails>(`/payments/${id}/pay`, {
+export function payPayment(id: string): Promise<PayResponse> {
+  return apiRequest({
     method: 'POST',
-    requiresAuth: true,
+    path: `/payments/${encodeURIComponent(id)}/pay`,
     body: {},
-    schema: PaymentDetailsSchema,
+    auth: true,
+    schema: PayResponseSchema,
   });
 }
 
-export async function getPayment(id: string): Promise<PaymentDetails> {
-  return apiRequest<PaymentDetails>(`/payments/${id}`, {
+export function getPayment(id: string): Promise<PaymentDetails> {
+  return apiRequest({
     method: 'GET',
-    requiresAuth: true,
+    path: `/payments/${encodeURIComponent(id)}`,
+    auth: true,
     schema: PaymentDetailsSchema,
   });
 }
 
-export async function refundPayment(id: string, paymentRequest: string): Promise<void> {
-  await apiRequest<PaymentDetails>(`/payments/${id}/refund`, {
+export function refundPayment(id: string, paymentRequest: string): Promise<PaymentIntent> {
+  return apiRequest({
     method: 'POST',
-    requiresAuth: true,
+    path: `/payments/${encodeURIComponent(id)}/refund`,
     body: { payment_request: paymentRequest },
-    schema: PaymentDetailsSchema,
+    auth: true,
+    schema: PaymentIntentSchema,
   });
 }
 
-export async function getTransactions(limit = 50): Promise<TransactionList> {
-  return apiRequest<TransactionList>(`/transactions?limit=${limit}`, {
+export function getTransactions(limit = 50): Promise<PaymentIntent[]> {
+  return apiRequest({
     method: 'GET',
-    requiresAuth: true,
-    schema: TransactionListSchema,
+    path: `/transactions?limit=${limit}`,
+    auth: true,
+    schema: PaymentIntentSchema.array(),
   });
 }
 
-// Dev endpoints
-export async function simulatePayout(id: string, status: string): Promise<PaymentDetails> {
-  return apiRequest<PaymentDetails>(`/dev/payments/${id}/payout`, {
+export function simulatePayout(id: string, status: 'success' | 'failed' | 'reversed'): Promise<{ outcome: string }> {
+  return apiRequest({
     method: 'POST',
-    requiresAuth: true,
+    path: `/dev/payments/${encodeURIComponent(id)}/payout`,
     body: { status },
-    schema: PaymentDetailsSchema,
+    auth: true,
+    schema: DevPayoutOutcomeSchema,
   });
 }
 
-// Auth helpers
-export { getStoredToken, setStoredToken, clearStoredToken };
-
-// Ensure user is authenticated, creating a new user if needed
-export async function ensureUser(): Promise<void> {
-  const token = getStoredToken();
-  if (!token) {
-    try {
-      const user = await createUser();
-      setStoredToken(user.token);
-    } catch (error) {
-      console.error('Failed to create user:', error);
-      throw error;
-    }
-  }
-}
+export type { PaymentDetails, PaymentIntent, PayResponse, Quote, RecipientResolution, PayoutInstitution, CurrencyInfo };

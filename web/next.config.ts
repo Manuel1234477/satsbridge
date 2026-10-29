@@ -5,14 +5,6 @@ const config: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react"],
   },
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
-  },
 };
 
 export default config;

@@ -1,31 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useNow } from './useNow';
 
-export function useCountdown(expiresAt: string | null) {
-  const [secondsLeft, setSecondsLeft] = useState(0);
-  const [isExpired, setIsExpired] = useState(false);
-
-  useEffect(() => {
-    if (!expiresAt) {
-      setSecondsLeft(0);
-      setIsExpired(false);
-      return;
-    }
-
-    const update = () => {
-      const now = new Date();
-      const expires = new Date(expiresAt);
-      const delta = Math.max(0, Math.floor((expires.getTime() - now.getTime()) / 1000));
-
-      setSecondsLeft(delta);
-      setIsExpired(delta === 0);
-    };
-
-    update();
-    const interval = setInterval(update, 1000);
-    return () => clearInterval(interval);
-  }, [expiresAt]);
-
-  return { secondsLeft, isExpired };
+// Display-only countdown to an ISO timestamp. The server decides when something expires.
+export function useCountdown(expiresAt: string | null | undefined): { secondsLeft: number; isExpired: boolean } {
+  const now = useNow();
+  if (!expiresAt) return { secondsLeft: 0, isExpired: false };
+  const secondsLeft = Math.max(0, Math.ceil((new Date(expiresAt).getTime() - now) / 1000));
+  return { secondsLeft, isExpired: secondsLeft === 0 };
 }
