@@ -8,6 +8,8 @@ import { formatWithCode } from '@/lib/money';
 import { useCurrencies } from '@/hooks/useCurrencies';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { History } from 'lucide-react';
 
 type Tone = 'success' | 'pending' | 'failed' | 'refunded';
 
@@ -56,7 +58,7 @@ export function HistoryList() {
 
   if (transactions.isPending || currencies.isPending) {
     return (
-      <div className="page" aria-busy="true" aria-label="Loading activity">
+      <div className="page medium" aria-busy="true" aria-label="Loading activity">
         <Skeleton height={76} />
         <Skeleton height={76} />
         <Skeleton height={76} />
@@ -66,7 +68,7 @@ export function HistoryList() {
   if (transactions.isError || currencies.isError) {
     const message = (transactions.error ?? currencies.error)?.message ?? 'Something went wrong.';
     return (
-      <div className="page">
+      <div className="page medium">
         <p role="alert" className="notice notice-failed">
           {message}
         </p>
@@ -80,19 +82,25 @@ export function HistoryList() {
   const list = transactions.data;
   if (list.length === 0) {
     return (
-      <div className="page items-center text-center">
-        <h1 className="page-title">No activity yet</h1>
-        <p className="label">Payments you make will appear here.</p>
-        <Link href="/" className="btn btn-accent">
-          Send money
-        </Link>
+      <div className="page medium">
+        <h1 className="page-title">Activity</h1>
+        <EmptyState
+          icon={<History className="h-6 w-6" />}
+          title="No activity yet"
+          body="Payments you make will appear here, grouped by day."
+          action={
+            <Link href="/" className="btn btn-accent">
+              Send money
+            </Link>
+          }
+        />
       </div>
     );
   }
 
   const groups = groupByDay(list);
   return (
-    <div className="page">
+    <div className="page medium">
       <h1 className="page-title">Activity</h1>
       {groups.map((group) => (
         <section key={group.label} aria-label={group.label} className="flex flex-col gap-2">

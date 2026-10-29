@@ -8,6 +8,7 @@ import type { ApiError } from '@/lib/api/errors';
 import type { CurrencyInfo, Quote, Rail } from '@/lib/api/schemas';
 import { formatMinor, formatWithCode } from '@/lib/money';
 import { RAIL_LABELS } from '@/lib/rails';
+import { RailSelector } from '@/components/ui/RailSelector';
 import { useCountdown } from '@/hooks/useCountdown';
 import { NgBankRecipient } from '@/features/recipient/NgBankRecipient';
 import { LightningAddressRecipient } from '@/features/recipient/LightningAddressRecipient';
@@ -50,13 +51,24 @@ export function ReviewPage({ quote, rail, currencies, onBack, onPaid }: ReviewPa
   const expiredBeforeSubmit = submitError?.message === 'quote expired';
 
   return (
-    <div className="page">
+    <div className="page narrow">
       <div className="flex items-center gap-2">
         <button type="button" onClick={onBack} className="btn btn-ghost" aria-label="Back to amounts">
           <ChevronLeft className="h-5 w-5" aria-hidden="true" />
         </button>
         <h1 className="page-title">{draft ? 'Review and pay' : 'Who is receiving this?'}</h1>
       </div>
+
+      {!draft && (
+        <div className="flex flex-col gap-2">
+          <RailSelector
+            rails={currencies.find((c) => c.code === quote.destination_currency)?.payout_rails.map((r) => r.rail) ?? [rail]}
+            value={rail}
+            label="Payout method for this quote"
+          />
+          <p className="label">The payout method is part of your quote. Go back to change it.</p>
+        </div>
+      )}
 
       {!draft && (
         <section className="card">

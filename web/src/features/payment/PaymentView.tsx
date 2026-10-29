@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink } from 'lucide-react';
+import { Check, Copy, ExternalLink, Printer } from 'lucide-react';
 import { LightningQr } from '@/components/QrCode';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { useCountdown } from '@/hooks/useCountdown';
@@ -72,7 +72,7 @@ function PaymentBody({ payment, currencies }: { payment: PaymentDetails; currenc
   }
 
   return (
-    <div className="page">
+    <div className="flex flex-col gap-5">
       <Outcome payment={payment} currencies={currencies} />
       {activeStepIndex(payment.status) !== null && <Tracker payment={payment} />}
       {payment.status === 'REFUND_PENDING' && <RefundForm payment={payment} />}
@@ -107,7 +107,7 @@ function InvoiceView({ payment, currencies }: { payment: PaymentDetails; currenc
   };
 
   return (
-    <div className="page items-center text-center">
+    <div className="flex flex-col items-center gap-5 text-center">
       <p className="label">Pay {formatWithCode(payment.source_amount, expOf(currencies, payment.source_currency), payment.source_currency)}</p>
       <div className="qr-frame">
         <LightningQr value={invoice.payment_request} />
@@ -146,7 +146,8 @@ function InvoiceView({ payment, currencies }: { payment: PaymentDetails; currenc
 
       <div className="flex w-full flex-col gap-3">
         <button type="button" onClick={() => copy(invoice.payment_request, 'invoice')} className="btn btn-accent btn-block">
-          {copied === 'invoice' ? 'Copied' : 'Copy invoice'}
+          {copied === 'invoice' ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
+          <span aria-live="polite">{copied === 'invoice' ? 'Copied' : 'Copy invoice'}</span>
         </button>
         <a href={`lightning:${invoice.payment_request}`} className="btn btn-quiet btn-block">
           <ExternalLink className="h-4 w-4" aria-hidden="true" />
@@ -180,10 +181,17 @@ function Outcome({ payment, currencies }: { payment: PaymentDetails; currencies:
       );
     case 'COMPLETED':
       return (
+        <>
+          <div className="success-check" aria-hidden="true">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12.5l4.5 4.5L19 7.5" />
+            </svg>
+          </div>
         <Notice tone="success" pill={<StatusPill tone="success" label="Money delivered" />}>
           {payment.recipient_name ?? 'The recipient'} has been paid{' '}
           {formatWithCode(payment.expected_payout, expOf(currencies, payment.destination_currency), payment.destination_currency)}.
         </Notice>
+        </>
       );
     case 'EXPIRED':
       return <Expired payment={payment} />;
@@ -368,6 +376,7 @@ function Receipt({ payment, currencies }: { payment: PaymentDetails; currencies:
           Receipt
         </h2>
         <button type="button" onClick={() => window.print()} className="btn btn-ghost">
+          <Printer className="h-4 w-4" aria-hidden="true" />
           Download receipt
         </button>
       </div>

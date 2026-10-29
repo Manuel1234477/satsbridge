@@ -5,19 +5,22 @@ import { ApiError } from '@/lib/api/errors';
 import { isRateStale } from '@/lib/rate-freshness';
 import { useNow } from '@/hooks/useNow';
 import Link from 'next/link';
-import { ArrowDownUp } from 'lucide-react';
-import { QuoteCard } from '@/components/QuoteCard';
+import { ArrowDownUp, CircleHelp, History, Send } from 'lucide-react';
+import { LiveRatePanel } from '@/components/LiveRatePanel';
+import { InlineAlert } from '@/components/ui/InlineAlert';
+import { RailSelector } from '@/components/ui/RailSelector';
+import { useAnimatedNumber } from '@/hooks/useAnimatedNumber';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { AmountInput } from '@/components/ui/AmountInput';
 import { CurrencyChip } from '@/components/ui/CurrencyChip';
 import { CurrencySheet } from '@/components/ui/CurrencySheet';
 import { Sheet } from '@/components/ui/Sheet';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { useCountdown } from '@/hooks/useCountdown';
 import { useDebounced } from '@/hooks/useDebounced';
 import { useQuotePreview } from '@/hooks/useQuotePreview';
 import type { CreateQuoteInput } from '@/lib/api';
 import type { CurrencyInfo, Currency, Quote, Rail } from '@/lib/api/schemas';
-import { parseMinor, toInputText } from '@/lib/money';
+import { formatMinor, parseMinor, toInputText } from '@/lib/money';
 import { RAIL_LABELS } from '@/lib/rails';
 
 export interface SendPrefill {
@@ -45,7 +48,7 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
   });
   const [destinationText, setDestinationText] = useState('');
   const [chosenRail, setChosenRail] = useState<Rail | ''>('');
-  const [sheet, setSheet] = useState<'source' | 'destination' | 'rail' | 'help' | null>(null);
+  const [sheet, setSheet] = useState<'source' | 'destination' | 'help' | null>(null);
   const amountRef = useRef<HTMLInputElement>(null);
 
   const sourceInfo = currencies.find((c) => c.code === sourceCode);
@@ -85,9 +88,6 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
     void refetchQuote();
   }, [refetchQuote]);
 
-  const sourceDisplay = side === 'source' ? sourceText : quote ? toInputText(quote.source_amount, sourceExponent) : '';
-  const destinationDisplay =
-    side === 'destination' ? destinationText : quote ? toInputText(quote.destination_amount, destinationExponent) : '';
 
   const canSwap = destinationInfo?.can_send === true;
   const swap = () => {
@@ -104,11 +104,32 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
     ? (() => {
         const rail = rails.find((r) => r.rail === activeRail);
         if (!rail || rail.min_payout_minor === null || rail.max_payout_minor === null) return undefined;
-        return `Payouts via ${RAIL_LABELS[activeRail]}: ${toInputText(rail.min_payout_minor, destinationExponent)} to ${toInputText(rail.max_payout_minor, destinationExponent)} ${destinationCode}`;
+        return `Payouts via ${RAIL_LABELS[activeRail]}: ${formatMinor(rail.min_payout_minor, destinationExponent)} to ${formatMinor(rail.max_payout_minor, destinationExponent)} ${destinationCode}`;
       })()
     : undefined;
 
   const continueEnabled = quote !== undefined && !pending && !isExpired && quoteQuery.isSuccess;
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  const animatedDestination = useAnimatedNumber(quote?.destination_amount);
+  const animatedSource = useAnimatedNumber(quote?.source_amount);
+  const sourceShown =
+    side === 'source' ? sourceText : animatedSource !== undefined ? toInputText(animatedSource, sourceExponent) : '';
+  const destinationShown =
+    side === 'destination'
+      ? destinationText
+      : animatedDestination !== undefined
+        ? toInputText(animatedDestination, destinationExponent)
+        : '';
+
+  const quoteError = quoteQuery.error;
+  const validationProblem = quoteError instanceof ApiError && quoteError.code === 'validation_error';
+  const canRetry = quoteError !== null && !validationProblem;
+  const alertMessage = validationProblem
+    ? payoutHint
+      ? `Check the amount. ${payoutHint}.`
+      : 'Check the amount and try a different value.'
+    : (quoteError?.message ?? '');
+
   const reason = !activeRail
     ? 'Choose a payout method'
     : typedMinor === null
@@ -120,124 +141,129 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
           : quoteQuery.isError
             ? retryable
               ? 'Could not get a rate. Try again.'
-              : 'Fix the amount to continue'
+              : 'Check the amount to continue'
             : '';
+
+  const panel = (
+    <LiveRatePanel
+      quote={quote}
+      sourceExponent={sourceExponent}
+      destinationExponent={destinationExponent}
+      stale={quote ? isRateStale(quote.rate_as_of, now, quoteQuery.isError) : false}
+      loading={quoteQuery.isFetching || (inputKey !== '' && inputKey !== debouncedKey)}
+      onExpired={refreshQuote}
+      compact={!isDesktop}
+    />
+  );
 
   return (
     <div className="page">
       <h1 className="sr-only">Send money</h1>
-      <section aria-label="You send" className="flex flex-col items-center gap-3 pt-6">
-        <p className="label">You send</p>
-        <AmountInput
-          label="Amount you send"
-          variant="hero"
-          inputRef={amountRef}
-          value={sourceDisplay}
-          disabled={!sourceInfo}
-          onChange={(text) => {
-            setSide('source');
-            setSourceText(text);
-          }}
-        />
-        <CurrencyChip code={sourceCode} onClick={() => setSheet('source')} />
-        {side === 'source' && typedMinor === null && sourceText !== '' && (
-          <p role="alert" className="error-text">
-            Enter an amount with up to {sourceExponent} decimals
-          </p>
-        )}
-      </section>
+      <div className="send-grid">
+        <div className="flex flex-col gap-5">
+          <section aria-label="Amounts" className="card flex flex-col gap-5">
+            <div className="flex flex-col items-center gap-3 pt-2">
+              <p className="label">You send</p>
+              <AmountInput
+                label="Amount you send"
+                variant="hero"
+                inputRef={amountRef}
+                value={sourceShown}
+                disabled={!sourceInfo}
+                onChange={(text) => {
+                  setSide('source');
+                  setSourceText(text);
+                }}
+              />
+              <CurrencyChip code={sourceCode} onClick={() => setSheet('source')} />
+              {side === 'source' && typedMinor === null && sourceText !== '' && (
+                <p className="label">Enter an amount with up to {sourceExponent} decimals.</p>
+              )}
+            </div>
 
-      <div className="flex justify-center">
-        <button type="button" onClick={swap} disabled={!canSwap} aria-label="Swap currencies" className="round-action">
-          <span className="disc">
-            <ArrowDownUp className="h-5 w-5" aria-hidden="true" />
-          </span>
-        </button>
-      </div>
-
-      <section className="card flex flex-col gap-3" aria-label="They receive">
-        <div className="flex items-center justify-between gap-3">
-          <p className="label">They receive</p>
-          <CurrencyChip code={destinationCode} onClick={() => setSheet('destination')} />
-        </div>
-        <AmountInput
-          label="Amount they receive"
-          variant="card"
-          value={destinationDisplay}
-          disabled={!destinationInfo}
-          onChange={(text) => {
-            setSide('destination');
-            setDestinationText(text);
-          }}
-        />
-        {payoutHint && <p className="label">{payoutHint}</p>}
-        {side === 'destination' && typedMinor === null && destinationText !== '' && (
-          <p role="alert" className="error-text">
-            Enter an amount with up to {destinationExponent} decimals
-          </p>
-        )}
-      </section>
-
-      <nav aria-label="Actions" className="flex justify-between px-2">
-        <button type="button" className="round-action" onClick={() => amountRef.current?.focus()}>
-          <span className="disc" aria-hidden="true">
-            ↑
-          </span>
-          Send
-        </button>
-        <button type="button" className="round-action" disabled={rails.length < 2} onClick={() => setSheet('rail')}>
-          <span className="disc" aria-hidden="true">
-            ⇄
-          </span>
-          Rail
-        </button>
-        <Link href="/history" className="round-action" style={{ textDecoration: 'none' }}>
-          <span className="disc" aria-hidden="true">
-            ≡
-          </span>
-          Activity
-        </Link>
-        <button type="button" className="round-action" onClick={() => setSheet('help')}>
-          <span className="disc" aria-hidden="true">
-            ?
-          </span>
-          Help
-        </button>
-      </nav>
-
-      <div aria-live="polite" className="flex flex-col gap-3">
-        {quoteQuery.isError && (
-          <div className="notice notice-failed flex-col">
-            <p role="alert">{quoteQuery.error.message}</p>
-            {retryable && (
-              <button type="button" className="btn btn-quiet btn-block" onClick={() => void refetchQuote()} disabled={quoteQuery.isFetching}>
-                {quoteQuery.isFetching ? 'Trying again…' : 'Try again'}
+            <div className="relative flex items-center justify-center">
+              <span className="absolute inset-x-0 top-1/2 h-px bg-[var(--hairline)]" aria-hidden="true" />
+              <button type="button" onClick={swap} disabled={!canSwap} aria-label="Swap currencies" className="round-action relative">
+                <span className="disc">
+                  <ArrowDownUp className="h-5 w-5" aria-hidden="true" />
+                </span>
               </button>
-            )}
-          </div>
-        )}
-        {quote && (
-          <QuoteCard
-            quote={quote}
-            sourceExponent={sourceExponent}
-            destinationExponent={destinationExponent}
-            stale={isRateStale(quote.rate_as_of, now, quoteQuery.isError)}
-            onExpired={refreshQuote}
-          />
-        )}
-        {quoteQuery.isFetching && !quote && <Skeleton height={120} />}
-      </div>
+            </div>
 
-      <div className="dock">
-        {reason && <p className="label text-center">{reason}</p>}
-        <button
-          type="button"
-          onClick={() => quote && activeRail && onContinue(quote, activeRail)}
-          disabled={!continueEnabled || !activeRail}
-          className="btn btn-accent btn-block"
-        >
-          Continue
-        </button>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="label">They receive</p>
+                <CurrencyChip code={destinationCode} onClick={() => setSheet('destination')} />
+              </div>
+              <AmountInput
+                label="Amount they receive"
+                variant="card"
+                value={destinationShown}
+                disabled={!destinationInfo}
+                onChange={(text) => {
+                  setSide('destination');
+                  setDestinationText(text);
+                }}
+              />
+              {rails.length > 1 && (
+                <RailSelector rails={rails.map((r) => r.rail)} value={activeRail} onChange={(rail) => setChosenRail(rail)} />
+              )}
+              {payoutHint && <p className="label">{payoutHint}</p>}
+              {side === 'destination' && typedMinor === null && destinationText !== '' && (
+                <p className="label">Enter an amount with up to {destinationExponent} decimals.</p>
+              )}
+            </div>
+          </section>
+
+          {quoteQuery.isError && (
+            <InlineAlert
+              message={alertMessage}
+              onRetry={canRetry ? () => void refetchQuote() : undefined}
+              retrying={quoteQuery.isFetching}
+            />
+          )}
+
+          {!isDesktop && panel}
+
+          <nav aria-label="Shortcuts" className="flex justify-around">
+            <button type="button" className="round-action" onClick={() => amountRef.current?.focus()}>
+              <span className="disc">
+                <Send className="h-5 w-5" aria-hidden="true" />
+              </span>
+              Send
+            </button>
+            <Link href="/history" className="round-action">
+              <span className="disc">
+                <History className="h-5 w-5" aria-hidden="true" />
+              </span>
+              Activity
+            </Link>
+            <button type="button" className="round-action" onClick={() => setSheet('help')}>
+              <span className="disc">
+                <CircleHelp className="h-5 w-5" aria-hidden="true" />
+              </span>
+              Help
+            </button>
+          </nav>
+
+          <div className="dock">
+            {reason && (
+              <p className="label text-center" aria-live="polite">
+                {reason}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => quote && activeRail && onContinue(quote, activeRail)}
+              disabled={!continueEnabled || !activeRail}
+              className="btn btn-accent btn-block"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+
+        {isDesktop && <aside className="live-panel-sticky">{panel}</aside>}
       </div>
 
       <CurrencySheet
@@ -263,35 +289,11 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
           setChosenRail('');
         }}
       />
-      <Sheet open={sheet === 'rail'} onClose={() => setSheet(null)} title="Payout method">
-        <div className="sheet-list" role="listbox" aria-label="Payout method">
-          {rails.map((r) => (
-            <button
-              key={r.rail}
-              type="button"
-              role="option"
-              aria-selected={r.rail === activeRail}
-              className="sheet-option"
-              onClick={() => {
-                setChosenRail(r.rail);
-                setSheet(null);
-              }}
-            >
-              <span className="flex-1">
-                <span className="block font-semibold">{RAIL_LABELS[r.rail]}</span>
-                <span className="block text-sm text-[var(--text-2)]">
-                  {r.guaranteed_amount ? 'Guaranteed amount' : 'Estimated: the provider converts at its own rate'}
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </Sheet>
       <Sheet open={sheet === 'help'} onClose={() => setSheet(null)} title="How this works">
-        <p className="text-[var(--text-2)]">
-          Enter an amount, check the rate, then confirm the recipient. You pay a Lightning invoice, and we pay the recipient in their currency.
+        <p className="label">
+          Enter an amount and check the live rate. Confirm the recipient, then pay one Lightning invoice. The recipient is paid in their own currency.
         </p>
-        <p className="text-[var(--text-2)]">Demo mode: no real money is moved.</p>
+        <p className="label">Sandbox: no real money is moved.</p>
       </Sheet>
     </div>
   );
