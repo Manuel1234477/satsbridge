@@ -8,7 +8,7 @@ test('XOF to NGN bank transfer: quote, verify account, pay, and receive a receip
 
   const destination = page.getByLabel('Amount they receive');
   await expect(destination).not.toHaveValue('', { timeout: 15_000 });
-  await expect(page.getByText(/Expires in \d+s/)).toBeVisible();
+  await expect(page.getByText(/expires in \d+s/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Who is receiving this?' })).toBeVisible();

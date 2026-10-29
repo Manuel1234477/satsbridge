@@ -9,6 +9,7 @@ Sender web app for SatsBridge: pick a currency pair, get a live quote, confirm t
 | Area | Built | Verified by |
 |---|---|---|
 | Send screen: live quotes (400 ms debounce), amount in either field, swap, payout method selector, quote countdown, auto-refresh on expiry, continue blocked on an expired quote | Yes | Browser test (happy path) |
+| Live rate: "1 XOF ≈ x NGN" from the latest quote, rate source, "updated Xs ago" from `rate_as_of`; quote refreshed every 30 s while the tab is visible and on expiry; Live/Stale pill (Stale after 2 min or a failed request); Try again on `provider_unavailable` and `rate_limited` | Yes | Unit test (freshness rule). Not run against the real backend |
 | NGN bank recipient: bank search, 10-digit account, resolve, "Confirm account holder" step, resolution cleared when bank or account changes | Yes | Browser test (happy path) |
 | Lightning Address and KES M-Pesa recipient forms | Yes | Not run in a browser |
 | Review, then `POST /payments`, then `POST /payments/{id}/pay`. A failed `/pay` retries on the same payment, never a second one | Yes | Browser test (happy path) |
@@ -42,6 +43,19 @@ Unit tests: 22 Vitest tests (money, status-to-step mapping, error mapping, mock 
 - **Receipt is print-to-PDF via `window.print()` only,** with no print stylesheet.
 - **Not in CI.** No pipeline runs these checks.
 
+## Two modes
+
+The app runs in one of two modes, chosen by `NEXT_PUBLIC_MOCK_API`. The default is `false`.
+
+| Mode | `NEXT_PUBLIC_MOCK_API` | Needs | Rates and payments |
+|---|---|---|---|
+| **Real backend** (default) | `false` | The Rust backend on `http://localhost:8080`, with LNbits and its keys, and outbound internet for the rate provider | Live quotes from the backend. Real Lightning invoices |
+| **Mock** | `true` | Nothing | An in-browser stand-in with the same routes and shapes. Fixed demo rates. No money moves |
+
+Mock mode is for demos and tests when the backend, LNbits or the network is unavailable. Its rates are fixed demo values, so the "Live" label in mock mode does not mean a live market rate.
+
+The backend refuses to start unless LNbits is reachable with valid keys. Its quotes also need the rate provider to be reachable. See [Running against the real backend](#running-against-the-real-backend).
+
 ## Setup
 
 ```bash
@@ -65,6 +79,14 @@ npm run dev                  # http://localhost:3000
 Build-time variables: Next inlines `NEXT_PUBLIC_*` values, so restart the dev server after changing them.
 
 ## Running against the real backend
+
+Requirements, all of which must be met for the backend to start and quote live rates:
+
+- LNbits reachable at `LNBITS_URL`, with `LNBITS_INVOICE_KEY` and `LNBITS_ADMIN_KEY`. The backend checks these at startup.
+- `PROVIDER_WEBHOOK_SECRET` set (the backend refuses to start without it).
+- Outbound HTTPS to the rate provider (Coinbase by default). Without it, the backend cannot produce a live rate.
+
+Not every machine meets these. The mock mode exists for the cases where they are not met.
 
 ```bash
 cd ../backend

@@ -3,6 +3,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { createQuote, getQuote, type CreateQuoteInput } from '@/lib/api';
 
+export const QUOTE_REFRESH_MS = 30_000;
+
 export function useQuotePreview(input: CreateQuoteInput | null) {
   return useQuery({
     queryKey: ['quote-preview', input],
@@ -13,6 +15,8 @@ export function useQuotePreview(input: CreateQuoteInput | null) {
     enabled: input !== null,
     retry: false,
     gcTime: 0,
+    refetchInterval: QUOTE_REFRESH_MS,
+    refetchIntervalInBackground: false,
   });
 }
 
