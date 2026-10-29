@@ -43,7 +43,7 @@ Every external system sits behind a trait. Lightning is LNbits only. For payouts
 | `FxProvider` | `StaticFxProvider` | Bitnob, Coinbase and CoinGecko, cached, tried in order | `FX_PROVIDERS` |
 | `LightningAdapter` | none | `LnbitsAdapter` (required) | `LNBITS_URL`, `LNBITS_INVOICE_KEY` |
 | `PayoutAdapter` NGN `NG_BANK_TRANSFER` | `MockNgnAdapter` | `BitnobPayoutAdapter` | `BITNOB_COUNTRIES=NG` |
-| `PayoutAdapter` `MOBILE_MONEY` (KE, XOF, XAF countries) | `MockMobileMoneyAdapter` (XOF, XAF) | `BitnobPayoutAdapter` | `BITNOB_COUNTRIES=KE,SN,CI,...` |
+| `PayoutAdapter` `MOBILE_MONEY` (KE, XOF, XAF, GN countries) | `MockMobileMoneyAdapter` (XOF, XAF, GNF) | `BitnobPayoutAdapter` | `BITNOB_COUNTRIES=KE,SN,CI,...` |
 | `PayoutAdapter` NGN `LIGHTNING_ADDRESS` | none | `LightningAddressAdapter` (Tapnob) | `TAPNOB_DOMAINS` (empty disables it) |
 | `PayoutAdapter` KES `KE_MOBILE_MONEY` | `MockTandoAdapter` | not built; use Bitnob `KE` instead | `MOCK_PAYOUTS` |
 
