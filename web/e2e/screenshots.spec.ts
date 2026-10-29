@@ -6,7 +6,7 @@ const OUT = process.env.SHOTS_DIR ?? '/tmp/satsbridge-shots';
 
 const VIEWPORTS = [
   { name: 'mobile-390', width: 390, height: 844 },
-  { name: 'desktop-1280', width: 1280, height: 900 },
+  { name: 'desktop-1440', width: 1440, height: 900 },
 ];
 
 for (const vp of VIEWPORTS) {
@@ -14,6 +14,7 @@ for (const vp of VIEWPORTS) {
     test.skip(!process.env.SHOTS, 'set SHOTS=1 to capture screenshots');
     mkdirSync(OUT, { recursive: true });
     await page.setViewportSize({ width: vp.width, height: vp.height });
+    await page.addInitScript(() => localStorage.setItem('satsbridge.theme', 'dark'));
 
     await page.goto('/');
     await page.getByLabel('Amount you send').fill('10000');

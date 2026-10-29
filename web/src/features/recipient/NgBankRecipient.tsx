@@ -5,7 +5,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { getPayoutInstitutions, resolveRecipient } from '@/lib/api';
 import type { PayoutInstitution } from '@/lib/api/schemas';
 import { Sheet } from '@/components/ui/Sheet';
-import { CurrencyBadge } from '@/components/ui/CurrencyChip';
+import { Monogram } from '@/components/ui/CurrencyChip';
+import { ChevronDown } from 'lucide-react';
 import type { RecipientDraft } from './types';
 import { maskTail } from './types';
 
@@ -21,8 +22,9 @@ interface Resolution {
   accountNumber: string;
 }
 
+// NUBAN grouping 3-3-4: 0123456789 -> "012 345 6789".
 function groupDigits(digits: string): string {
-  return digits.replace(/(\d{3})(?=\d)/g, '$1 ');
+  return [digits.slice(0, 3), digits.slice(3, 6), digits.slice(6)].filter(Boolean).join(' ');
 }
 
 function initials(name: string): string {
@@ -112,7 +114,7 @@ export function NgBankRecipient({ onConfirm }: NgBankRecipientProps) {
         <span className="label">Bank</span>
         <button type="button" className="field flex items-center justify-between text-left" aria-haspopup="dialog" onClick={() => setBankSheet(true)} disabled={banks.isPending}>
           <span>{selectedBank ? selectedBank.name : banks.isPending ? 'Loading banks…' : 'Choose bank'}</span>
-          <span aria-hidden="true" className="text-[var(--text-2)]">▾</span>
+          <ChevronDown className="h-4 w-4 text-[var(--text-2)]" aria-hidden="true" />
         </button>
         {banks.isError && (
           <p role="alert" className="error-text">
@@ -122,9 +124,14 @@ export function NgBankRecipient({ onConfirm }: NgBankRecipientProps) {
       </div>
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="account-number" className="label">
-          Account number (10 digits)
-        </label>
+        <div className="flex items-baseline justify-between">
+          <label htmlFor="account-number" className="label">
+            Account number (10 digits)
+          </label>
+          <span className={`money text-sm ${accountValid ? 'text-[var(--accent)]' : 'label'}`} aria-hidden="true">
+            {accountNumber.length}/10
+          </span>
+        </div>
         <input
           id="account-number"
           type="text"
@@ -133,7 +140,7 @@ export function NgBankRecipient({ onConfirm }: NgBankRecipientProps) {
           placeholder="012 345 6789"
           value={groupDigits(accountNumber)}
           onChange={(e) => changeAccount(e.target.value)}
-          className="field money text-[22px] tracking-wider"
+          className="field money text-[24px] font-semibold tracking-[0.08em]" style={{ minHeight: 60 }}
           aria-describedby="account-hint"
         />
         <p id="account-hint" className="label">
@@ -196,7 +203,7 @@ export function NgBankRecipient({ onConfirm }: NgBankRecipientProps) {
                 setBankSheet(false);
               }}
             >
-              <CurrencyBadge code={b.name.replace(/[^A-Za-z]/g, '')} />
+              <Monogram name={b.name} />
               <span>{b.name}</span>
             </button>
           ))}
