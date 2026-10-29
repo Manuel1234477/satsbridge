@@ -1,0 +1,34 @@
+# Render Blueprint for the backend (demo setup: mock payouts, real Lightning via LNbits).
+# Render > New > Blueprint > pick this repo, then fill in the variables marked sync: false.
+services:
+  - type: web
+    name: satsbridge-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: starter # persistent disks need a paid plan
+    healthCheckPath: /api/v1/health
+    disk:
+      name: satsbridge-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: MOCK_PAYOUTS
+        value: "true"
+      - key: BITNOB_COUNTRIES
+        value: ""
+      # Demo only: mounts the mock payout simulator so test payments can be completed.
+      - key: DEV_ROUTES
+        value: "true"
+      - key: LNBITS_URL
+        sync: false
+      - key: LNBITS_INVOICE_KEY
+        sync: false
+      - key: LNBITS_ADMIN_KEY
+        sync: false
+      # This service's public URL, e.g. https://satsbridge-api.onrender.com
+      - key: PUBLIC_BASE_URL
+        sync: false
+      # Origin of the deployed web app, e.g. https://satsbridge.vercel.app
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false

@@ -213,3 +213,17 @@ async fn rejects_amounts_outside_limits_and_bad_beneficiaries() {
         .await;
     assert!(too_short.is_err(), "a 5-digit account number must be rejected");
 }
+
+#[tokio::test]
+async fn serves_guinea_mobile_money() {
+    let (_sandbox, base) = start_sandbox().await;
+    let client = Arc::new(BitnobClient::new(reqwest::Client::new(), config(&base, SECRET, "")));
+    let limits = client.limits().await.unwrap();
+    let adapter =
+        BitnobPayoutAdapter::connect(client, Currency::Gnf, Rail::MobileMoney, &["GN".to_string()], &limits)
+            .await
+            .unwrap();
+    let operators = adapter.institutions(Some("GN")).await.unwrap();
+    assert!(operators.iter().any(|o| o.code == "OM"));
+    assert!(operators.iter().any(|o| o.code == "MTN"));
+}
