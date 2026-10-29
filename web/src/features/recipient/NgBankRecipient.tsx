@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { CheckCircle2 } from 'lucide-react';
 import { getPayoutInstitutions, resolveRecipient } from '@/lib/api';
 import type { PayoutInstitution } from '@/lib/api/schemas';
+import { Sheet } from '@/components/ui/Sheet';
+import { CurrencyBadge } from '@/components/ui/CurrencyChip';
 import type { RecipientDraft } from './types';
 import { maskTail } from './types';
 
@@ -20,8 +21,22 @@ interface Resolution {
   accountNumber: string;
 }
 
+function groupDigits(digits: string): string {
+  return digits.replace(/(\d{3})(?=\d)/g, '$1 ');
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('');
+}
+
 export function NgBankRecipient({ onConfirm }: NgBankRecipientProps) {
   const [bankCode, setBankCode] = useState('');
+  const [bankSheet, setBankSheet] = useState(false);
   const [bankFilter, setBankFilter] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [resolution, setResolution] = useState<Resolution | null>(null);
@@ -92,42 +107,22 @@ export function NgBankRecipient({ onConfirm }: NgBankRecipientProps) {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <label htmlFor="bank-filter" className="block text-sm font-medium">
-          Bank
-        </label>
-        <input
-          id="bank-filter"
-          type="search"
-          placeholder="Search bank name"
-          value={bankFilter}
-          onChange={(e) => setBankFilter(e.target.value)}
-          className="form-input"
-          disabled={banks.isPending}
-        />
-        <select
-          aria-label="Bank list"
-          size={Math.min(6, Math.max(visibleBanks.length, 2))}
-          value={bankCode}
-          onChange={(e) => changeBank(e.target.value)}
-          className="form-input"
-        >
-          {visibleBanks.map((b) => (
-            <option key={b.code} value={b.code}>
-              {b.name}
-            </option>
-          ))}
-        </select>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <span className="label">Bank</span>
+        <button type="button" className="field flex items-center justify-between text-left" aria-haspopup="dialog" onClick={() => setBankSheet(true)} disabled={banks.isPending}>
+          <span>{selectedBank ? selectedBank.name : banks.isPending ? 'Loading banks…' : 'Choose bank'}</span>
+          <span aria-hidden="true" className="text-[var(--text-2)]">▾</span>
+        </button>
         {banks.isError && (
-          <p role="alert" className="text-sm text-error-700 dark:text-error-300">
+          <p role="alert" className="error-text">
             {banks.error.message}
           </p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <label htmlFor="account-number" className="block text-sm font-medium">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="account-number" className="label">
           Account number (10 digits)
         </label>
         <input
@@ -135,13 +130,13 @@ export function NgBankRecipient({ onConfirm }: NgBankRecipientProps) {
           type="text"
           inputMode="numeric"
           autoComplete="off"
-          placeholder="0123456789"
-          value={accountNumber}
+          placeholder="012 345 6789"
+          value={groupDigits(accountNumber)}
           onChange={(e) => changeAccount(e.target.value)}
-          className="form-input font-mono tracking-wider"
+          className="field money text-[22px] tracking-wider"
           aria-describedby="account-hint"
         />
-        <p id="account-hint" className="text-xs text-muted">
+        <p id="account-hint" className="label">
           {accountNumber.length > 0 && !accountValid
             ? `${10 - accountNumber.length} more digits needed`
             : 'We check the account name with the bank before you pay.'}
@@ -149,33 +144,65 @@ export function NgBankRecipient({ onConfirm }: NgBankRecipientProps) {
       </div>
 
       {!resolution && (
-        <button type="button" onClick={runVerify} disabled={!canVerify} className="btn btn-secondary w-full">
+        <button type="button" onClick={runVerify} disabled={!canVerify} className="btn btn-quiet btn-block">
           {verify.isPending ? 'Checking account…' : 'Check account'}
         </button>
       )}
 
       {verify.isError && (
-        <p role="alert" className="rounded-lg bg-error-50 px-3 py-2 text-sm text-error-700 dark:bg-error-950 dark:text-error-200">
+        <p role="alert" className="notice notice-failed">
           {verify.error.message}
         </p>
       )}
 
       {resolution && (
-        <section aria-labelledby="confirm-holder" className="card card-content space-y-3 border-success-600">
-          <h3 id="confirm-holder" className="flex items-center gap-2 font-semibold">
-            <CheckCircle2 className="h-5 w-5 text-success-700 dark:text-success-300" aria-hidden="true" />
+        <section aria-labelledby="confirm-holder" className="card-raised flex flex-col items-center gap-3 text-center">
+          <h3 id="confirm-holder" className="label">
             Confirm account holder
           </h3>
-          <p className="text-lg font-semibold">{resolution.accountName}</p>
-          <p className="text-sm text-muted">
+          <span className="badge" style={{ width: 56, height: 56, fontSize: 18 }} aria-hidden="true">
+            {initials(resolution.accountName)}
+          </span>
+          <p className="text-[22px] font-semibold">{resolution.accountName}</p>
+          <p className="label">
             {resolution.bankName} · {maskTail(resolution.accountNumber)}
           </p>
-          <p className="text-sm text-muted">Check the name matches the person you are paying. Changing the bank or account will ask you to check again.</p>
-          <button type="button" onClick={confirm} className="btn btn-primary w-full">
-            Yes, this is the account holder
+          <p className="label">Check the name matches the person you are paying. Changing the bank or account asks you to check again.</p>
+          <button type="button" onClick={confirm} className="btn btn-accent btn-block">
+            Yes, this is correct
           </button>
         </section>
       )}
+
+      <Sheet open={bankSheet} onClose={() => setBankSheet(false)} title="Choose bank">
+        <input
+          type="search"
+          className="field"
+          placeholder="Search bank name or code"
+          aria-label="Search banks"
+          value={bankFilter}
+          onChange={(e) => setBankFilter(e.target.value)}
+        />
+        <div className="sheet-list" role="listbox" aria-label="Banks">
+          {visibleBanks.map((b) => (
+            <button
+              key={b.code}
+              type="button"
+              role="option"
+              aria-selected={b.code === bankCode}
+              className="sheet-option"
+              onClick={() => {
+                changeBank(b.code);
+                setBankSheet(false);
+              }}
+            >
+              <CurrencyBadge code={b.name.replace(/[^A-Za-z]/g, '')} />
+              <span>{b.name}</span>
+            </button>
+          ))}
+          {visibleBanks.length === 0 && <p className="p-3 text-[var(--text-2)]">No bank matches “{bankFilter}”.</p>}
+        </div>
+      </Sheet>
     </div>
   );
 }

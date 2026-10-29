@@ -1,10 +1,14 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { ArrowDownUp } from 'lucide-react';
-import { CurrencySelect } from '@/components/CurrencySelect';
-import { MoneyField } from '@/components/MoneyField';
 import { QuoteCard } from '@/components/QuoteCard';
+import { AmountInput } from '@/components/ui/AmountInput';
+import { CurrencyChip } from '@/components/ui/CurrencyChip';
+import { CurrencySheet } from '@/components/ui/CurrencySheet';
+import { Sheet } from '@/components/ui/Sheet';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useCountdown } from '@/hooks/useCountdown';
 import { useDebounced } from '@/hooks/useDebounced';
 import { useQuotePreview } from '@/hooks/useQuotePreview';
@@ -38,6 +42,8 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
   });
   const [destinationText, setDestinationText] = useState('');
   const [chosenRail, setChosenRail] = useState<Rail | ''>('');
+  const [sheet, setSheet] = useState<'source' | 'destination' | 'rail' | 'help' | null>(null);
+  const amountRef = useRef<HTMLInputElement>(null);
 
   const sourceInfo = currencies.find((c) => c.code === sourceCode);
   const destinationInfo = currencies.find((c) => c.code === destinationCode);
@@ -98,100 +104,103 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
     : undefined;
 
   const continueEnabled = quote !== undefined && !pending && !isExpired && quoteQuery.isSuccess;
+  const reason = !activeRail
+    ? 'Choose a payout method'
+    : typedMinor === null
+      ? 'Enter an amount to continue'
+      : isExpired
+        ? 'Rate expired. Getting a new one…'
+        : pending || quoteQuery.isFetching
+          ? 'Getting your rate…'
+          : quoteQuery.isError
+            ? 'Fix the amount to continue'
+            : '';
 
   return (
-    <div className="space-y-5">
-      <h1 className="text-3xl font-bold">Send money</h1>
-
-      <section className="card card-content space-y-4" aria-label="Amounts">
-        <CurrencySelect
-          label="You send"
-          currencies={currencies}
-          value={sourceCode}
-          onlySendable
-          onChange={(code) => {
-            setSourceCode(code as Currency);
-            setChosenRail('');
-          }}
-        />
-        <MoneyField
+    <div className="page">
+      <h1 className="sr-only">Send money</h1>
+      <section aria-label="You send" className="flex flex-col items-center gap-3 pt-6">
+        <p className="label">You send</p>
+        <AmountInput
           label="Amount you send"
-          code={sourceCode}
+          variant="hero"
+          inputRef={amountRef}
           value={sourceDisplay}
+          disabled={!sourceInfo}
           onChange={(text) => {
             setSide('source');
             setSourceText(text);
           }}
-          disabled={!sourceInfo}
-          error={side === 'source' && typedMinor === null && sourceText !== '' ? `Enter an amount with up to ${sourceExponent} decimals` : undefined}
         />
-
-        <div className="flex justify-center">
-          <button
-            type="button"
-            onClick={swap}
-            disabled={!canSwap}
-            aria-label="Swap currencies"
-            className="btn btn-secondary p-2"
-          >
-            <ArrowDownUp className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        <CurrencySelect
-          label="They receive"
-          currencies={currencies}
-          value={destinationCode}
-          onChange={(code) => {
-            setDestinationCode(code as Currency);
-            setChosenRail('');
-          }}
-        />
-        {rails.length > 1 && (
-          <div className="space-y-1">
-            <label htmlFor="rail" className="block text-sm font-medium">
-              Payout method
-            </label>
-            <select
-              id="rail"
-              value={activeRail ?? ''}
-              onChange={(e) => setChosenRail(e.target.value as Rail)}
-              className="form-input"
-            >
-              {rails.map((r) => (
-                <option key={r.rail} value={r.rail}>
-                  {RAIL_LABELS[r.rail]}
-                </option>
-              ))}
-            </select>
-          </div>
+        <CurrencyChip code={sourceCode} onClick={() => setSheet('source')} />
+        {side === 'source' && typedMinor === null && sourceText !== '' && (
+          <p role="alert" className="error-text">
+            Enter an amount with up to {sourceExponent} decimals
+          </p>
         )}
-        <MoneyField
+      </section>
+
+      <div className="flex justify-center">
+        <button type="button" onClick={swap} disabled={!canSwap} aria-label="Swap currencies" className="round-action">
+          <span className="disc">
+            <ArrowDownUp className="h-5 w-5" aria-hidden="true" />
+          </span>
+        </button>
+      </div>
+
+      <section className="card flex flex-col gap-3" aria-label="They receive">
+        <div className="flex items-center justify-between gap-3">
+          <p className="label">They receive</p>
+          <CurrencyChip code={destinationCode} onClick={() => setSheet('destination')} />
+        </div>
+        <AmountInput
           label="Amount they receive"
-          code={destinationCode}
+          variant="card"
           value={destinationDisplay}
+          disabled={!destinationInfo}
           onChange={(text) => {
             setSide('destination');
             setDestinationText(text);
           }}
-          disabled={!destinationInfo}
-          hint={payoutHint}
-          error={
-            side === 'destination' && typedMinor === null && destinationText !== ''
-              ? `Enter an amount with up to ${destinationExponent} decimals`
-              : undefined
-          }
-          helper={
-            quote && !quote.payout_amount_guaranteed ? (
-              <p className="text-xs text-muted">Estimated: the payout partner converts at its own rate.</p>
-            ) : null
-          }
         />
+        {payoutHint && <p className="label">{payoutHint}</p>}
+        {side === 'destination' && typedMinor === null && destinationText !== '' && (
+          <p role="alert" className="error-text">
+            Enter an amount with up to {destinationExponent} decimals
+          </p>
+        )}
       </section>
 
-      <div aria-live="polite" className="space-y-3">
+      <nav aria-label="Actions" className="flex justify-between px-2">
+        <button type="button" className="round-action" onClick={() => amountRef.current?.focus()}>
+          <span className="disc" aria-hidden="true">
+            ↑
+          </span>
+          Send
+        </button>
+        <button type="button" className="round-action" disabled={rails.length < 2} onClick={() => setSheet('rail')}>
+          <span className="disc" aria-hidden="true">
+            ⇄
+          </span>
+          Rail
+        </button>
+        <Link href="/history" className="round-action" style={{ textDecoration: 'none' }}>
+          <span className="disc" aria-hidden="true">
+            ≡
+          </span>
+          Activity
+        </Link>
+        <button type="button" className="round-action" onClick={() => setSheet('help')}>
+          <span className="disc" aria-hidden="true">
+            ?
+          </span>
+          Help
+        </button>
+      </nav>
+
+      <div aria-live="polite" className="flex flex-col gap-3">
         {quoteQuery.isError && (
-          <p role="alert" className="rounded-lg bg-error-50 px-3 py-2 text-sm text-error-700 dark:bg-error-950 dark:text-error-200">
+          <p role="alert" className="error-text">
             {quoteQuery.error.message}
           </p>
         )}
@@ -203,17 +212,74 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
             onExpired={refreshQuote}
           />
         )}
-        {quoteQuery.isFetching && !quote && <p className="text-sm text-muted">Getting your rate…</p>}
+        {quoteQuery.isFetching && !quote && <Skeleton height={120} />}
       </div>
 
-      <button
-        type="button"
-        onClick={() => quote && activeRail && onContinue(quote, activeRail)}
-        disabled={!continueEnabled || !activeRail}
-        className="btn btn-primary w-full py-3 text-base"
-      >
-        Continue
-      </button>
+      <div className="dock">
+        {reason && <p className="label text-center">{reason}</p>}
+        <button
+          type="button"
+          onClick={() => quote && activeRail && onContinue(quote, activeRail)}
+          disabled={!continueEnabled || !activeRail}
+          className="btn btn-accent btn-block"
+        >
+          Continue
+        </button>
+      </div>
+
+      <CurrencySheet
+        open={sheet === 'source'}
+        onClose={() => setSheet(null)}
+        title="Send currency"
+        currencies={currencies}
+        selected={sourceCode}
+        onlySendable
+        onSelect={(code) => {
+          setSourceCode(code as Currency);
+          setChosenRail('');
+        }}
+      />
+      <CurrencySheet
+        open={sheet === 'destination'}
+        onClose={() => setSheet(null)}
+        title="Receive currency"
+        currencies={currencies}
+        selected={destinationCode}
+        onSelect={(code) => {
+          setDestinationCode(code as Currency);
+          setChosenRail('');
+        }}
+      />
+      <Sheet open={sheet === 'rail'} onClose={() => setSheet(null)} title="Payout method">
+        <div className="sheet-list" role="listbox" aria-label="Payout method">
+          {rails.map((r) => (
+            <button
+              key={r.rail}
+              type="button"
+              role="option"
+              aria-selected={r.rail === activeRail}
+              className="sheet-option"
+              onClick={() => {
+                setChosenRail(r.rail);
+                setSheet(null);
+              }}
+            >
+              <span className="flex-1">
+                <span className="block font-semibold">{RAIL_LABELS[r.rail]}</span>
+                <span className="block text-sm text-[var(--text-2)]">
+                  {r.guaranteed_amount ? 'Guaranteed amount' : 'Estimated: the provider converts at its own rate'}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </Sheet>
+      <Sheet open={sheet === 'help'} onClose={() => setSheet(null)} title="How this works">
+        <p className="text-[var(--text-2)]">
+          Enter an amount, check the rate, then confirm the recipient. You pay a Lightning invoice, and we pay the recipient in their currency.
+        </p>
+        <p className="text-[var(--text-2)]">Demo mode: no real money is moved.</p>
+      </Sheet>
     </div>
   );
 }

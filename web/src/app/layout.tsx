@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Providers } from './providers';
-import { Disclaimer } from '@/components/Disclaimer';
+import { AppShell } from '@/components/ui/AppShell';
 
 export const metadata: Metadata = {
   title: 'SatsBridge - Cross-border payments with Bitcoin',
@@ -21,10 +21,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="pb-20 sm:pb-0">
+      <body>
         <Providers>
-          {children}
-          <Disclaimer />
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>
