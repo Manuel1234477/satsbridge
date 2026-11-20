@@ -1,4 +1,4 @@
-//! Stand-in for an NGN payout provider over NIBSS NIP (docs/prd-addendum-ngn-payout.md).
+//! Stand-in for an NGN payout provider over NIBSS NIP (instant interbank transfers).
 //!
 //! Demo behaviour: account `0000000000` does not resolve; every other valid NUBAN at a listed
 //! institution resolves to `DEMO RECIPIENT <last4>`.
@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 
-use super::{Institution, InstitutionKind, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient};
-use crate::{
+use stellarbridge::adapters::payout::{Institution, InstitutionKind, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient};
+use stellarbridge::{
     adapters::AdapterError,
     domain::{Currency, Rail, Recipient},
 };

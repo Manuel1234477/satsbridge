@@ -8,10 +8,11 @@ use serde::Deserialize;
 use super::CurrentUser;
 use crate::{
     db::{self, Deposit, PaymentIntent, Refund},
+    domain::Recipient,
     error::{AppError, AppResult},
     services::{
         payments::{self, CreatePaymentRequest, PaymentDetails},
-        refunds::{self, RefundDestination},
+        refunds,
     },
     state::AppState,
 };
@@ -45,12 +46,13 @@ pub async fn pay(
     Ok(Json(payments::pay(&state, &payment).await?))
 }
 
-/// Refund to the account the deposit came from (empty body), or to the given NGN account.
+/// Refund to the account the deposit came from (empty body), or to the given account in the
+/// source currency (same shape as a payment recipient).
 pub async fn refund(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
-    body: Option<Json<RefundDestination>>,
+    body: Option<Json<Recipient>>,
 ) -> AppResult<Json<Refund>> {
     let payment = payments::owned_payment(&state, &id, &user.0).await?;
     let refund = match body {
@@ -58,7 +60,7 @@ pub async fn refund(
             refunds::start_to(&state, &payment, destination, &format!("user {}", user.0)).await?
         }
         None => refunds::start_automatic(&state, &payment).await?.ok_or_else(|| {
-            AppError::Validation("the account this payment came from is unknown; give a bank account".into())
+            AppError::Validation("the account this payment came from is unknown; give one to refund to".into())
         })?,
     };
     Ok(Json(refund))

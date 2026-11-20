@@ -1,22 +1,15 @@
-# Render Blueprint for the backend (demo setup: mock collections and payouts, settlement on
-# Stellar testnet). Run `cargo run --bin stellar_setup` locally first and paste its keys below.
+# Render Blueprint for the backend (settlement on Stellar testnet).
+# Run `cargo run --bin stellar_setup` locally first and paste its keys below.
 # Render > New > Blueprint > pick this repo, then fill in the variables marked sync: false.
 services:
   - type: web
-    name: satsbridge-api
+    name: stellarbridge-api
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile
     plan: free # no persistent disk on the free plan: the SQLite database resets on every deploy and restart
     healthCheckPath: /api/v1/health
     envVars:
-      - key: MOCK_PAYOUTS
-        value: "true"
-      - key: BITNOB_COUNTRIES
-        value: ""
-      # Demo only: mounts the mock deposit/payout/refund simulators so test payments can be completed.
-      - key: DEV_ROUTES
-        value: "true"
       # HMAC secret for /api/v1/webhooks/provider and /webhooks/collections. Required.
       - key: PROVIDER_WEBHOOK_SECRET
         generateValue: true
@@ -30,11 +23,9 @@ services:
         sync: false
       - key: STELLAR_TREASURY_SECRET
         sync: false
-      - key: MOCK_COLLECTIONS
-        value: "true"
-      # This service's public URL, e.g. https://satsbridge-api.onrender.com
+      # This service's public URL, e.g. https://stellarbridge-api.onrender.com
       - key: PUBLIC_BASE_URL
         sync: false
-      # Origin of the deployed web app, e.g. https://satsbridge.vercel.app
+      # Origin of the deployed web app, e.g. https://stellarbridge.vercel.app
       - key: CORS_ALLOWED_ORIGINS
         sync: false

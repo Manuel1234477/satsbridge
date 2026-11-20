@@ -1,4 +1,4 @@
-# SatsBridge demo script: naira to Kenyan shillings in 3 minutes
+# StellarBridge demo script: naira to Kenyan shillings in 3 minutes
 
 Written for: the presenter and one judge watching the screen.
 
@@ -6,14 +6,7 @@ Written for: the presenter and one judge watching the screen.
 
 Pick one:
 
-- **Live on Stellar testnet (best):** the backend set up with `stellar_setup` and running with `DEV_ROUTES=true`, and the web app with dev tools on:
-
-  ```bash
-  cd backend && cargo run
-  cd web && NEXT_PUBLIC_DEV_TOOLS=true npm run dev
-  ```
-
-- **No network:** `cd web && NEXT_PUBLIC_MOCK_API=true npm run dev`. Same screens, made-up Stellar hashes, and the transfer "arrives" by itself after 8 seconds.
+This demo needs a collection and a payout provider, and none is wired in yet (see the [implementation status](implementation-status.md)). Until one is, the pay-in and payout steps below cannot be run end to end. The quote, the Stellar settlement and the receipt are real on testnet: set up with `stellar_setup`, then `cd backend && cargo run` and `cd web && npm run dev`.
 
 Open http://localhost:3000 in Chrome, about 390 px wide (phone view) or full width. Start from a fresh profile, or clear `localStorage` for the site.
 
@@ -39,18 +32,18 @@ Point at the "Sandbox" badge: no real money moves, and this is not a licensed fi
 
 1. The page shows a one-off **account number**, the bank, and the exact amount, with copy buttons.
 2. Say: "This is an ordinary Nigerian bank transfer. The account number exists for this payment only, so we know whose money arrived."
-3. Click **I have sent the transfer** (in mock mode, wait about 8 seconds instead).
+3. Click **I have sent the transfer**.
 
 ## 1:40 to 2:20: Settled on Stellar, then delivered
 
 1. The tracker moves to **Settled on Stellar**. Scroll to **On Stellar**: "Minted and converted", with the KES delivered and the ledger number.
 2. On testnet, click the transaction link. stellar.expert shows two operations: the issuer minting ₦150,000, and the path payment from NGN through USD to KES.
-3. Back in the app, use the dev panel's **Success** (the mock M-Pesa provider confirms). The banner reads **Money delivered**, and a second transaction appears: **Tokens burned after payout**.
+3. Back in the app, wait for the payout provider to confirm. The banner reads **Money delivered**, and a second transaction appears: **Tokens burned after payout**.
 4. Say: "The KES token only existed while the money was in flight. Once the shillings left our account in Kenya, the token was burned."
 
 ## 2:20 to 2:50: When the payout fails
 
-1. Start again with the same amount, and the number **0712340000**. In mock mode this fails by itself; on testnet, use the dev panel's **Failed**.
+1. Start again with the same amount, and the number **0712340000**. The payout provider must report a failure.
 2. The banner reads **Refund needed**, and **On Stellar** shows **Conversion reversed**.
 3. Say: "We undo the conversion on-chain and send the full ₦150,000 back to the account it came from. Ada doesn't have to do anything."
 4. The refund completes: **Refunded**.
@@ -58,11 +51,11 @@ Point at the "Sandbox" badge: no real money moves, and this is not a licensed fi
 ## 2:50 to 3:00: Close
 
 - Real: Stellar settlement on testnet (accounts, DEX liquidity, path payments, burns, reversals), the quote and refund rules, and the status model.
-- Not real here: the Nigerian bank collection, M-Pesa and mobile money. Those are mocks, behind interfaces where real providers (and Stellar anchors) plug in.
-- Next: a real NGN collection partner, backed assets through licensed anchors, and more corridors (GHS, XOF, XAF and GNF already work the same way).
+- Not real here: the Nigerian bank collection, M-Pesa and mobile money. Those have no provider yet, only interfaces where real providers (and Stellar anchors) plug in.
+- Any currency can be the sender's: switch "You send" to KES and the pay-in becomes an M-Pesa Paybill with a reference.
+- Next: real collection partners, backed assets through licensed anchors, and more corridors.
 
 ## If something goes wrong on stage
 
-- Page stuck on "Loading…": reload once. State is kept on the server (or in `localStorage` in mock mode).
+- Page stuck on "Loading…": reload once. State is kept on the server.
 - Quote error on testnet: the DEX needs liquidity. Rerun `cargo run --bin stellar_setup`.
-- Want the mock faster: `NEXT_PUBLIC_MOCK_TIME_SCALE=0.3 NEXT_PUBLIC_MOCK_API=true npm run dev`.

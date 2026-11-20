@@ -1,5 +1,6 @@
-//! Refunds of the sender's deposit, in their own currency, over a bank payout rail, for payments
-//! in REFUND_PENDING (underpaid or late deposit, failed settlement, failed or reversed payout).
+//! Refunds of the sender's deposit, in their own currency, for payments in REFUND_PENDING
+//! (underpaid or late deposit, failed settlement, failed or reversed payout). They go out on the
+//! source currency's payout rail: NGN bank transfer, M-Pesa, or mobile money.
 //!
 //! The refund goes back to the account the deposit came from when the collection provider
 //! reported it (automatically), or to an account the sender (or an admin) gives. The full amount
@@ -7,7 +8,6 @@
 //! account, but a pending, submitted or completed one can't be started again.
 
 use chrono::Utc;
-use serde::Deserialize;
 use sqlx::types::Json;
 
 use super::{
@@ -25,26 +25,26 @@ use crate::{
     state::AppState,
 };
 
-/// Where to send a refund, when the sender chooses.
-#[derive(Debug, Deserialize)]
-pub struct RefundDestination {
-    pub bank_code: String,
-    pub account_number: String,
-    /// From `POST /api/v1/recipients/resolve`.
-    pub resolution_id: String,
-}
-
 fn idempotency_key(payment_id: &str) -> String {
     format!("{payment_id}-refund")
 }
 
-fn adapter_for<'a>(state: &'a AppState, payment: &PaymentIntent) -> AppResult<&'a std::sync::Arc<dyn PayoutAdapter>> {
-    state.payouts.default_for(payment.source_currency).ok_or_else(|| {
-        AppError::Validation(format!(
-            "no {} payout rail is configured for refunds",
-            payment.source_currency
-        ))
-    })
+/// The source currency's payout rail for this destination.
+fn adapter_for<'a>(
+    state: &'a AppState,
+    payment: &PaymentIntent,
+    destination: &Recipient,
+) -> AppResult<&'a std::sync::Arc<dyn PayoutAdapter>> {
+    state
+        .payouts
+        .get(payment.source_currency, destination.rail())
+        .ok_or_else(|| {
+            AppError::Validation(format!(
+                "refunds in {} can't go to a {} account",
+                payment.source_currency,
+                destination.rail().as_str()
+            ))
+        })
 }
 
 /// Starts the refund to the deposit's source account, if the provider reported one.
@@ -59,14 +59,13 @@ pub async fn start_automatic(state: &AppState, payment: &PaymentIntent) -> AppRe
     if events.iter().any(|e| e.event_type == "refund.source_unusable") {
         return Ok(None); // already tried; waiting for the sender to give an account
     }
-    let recipient = Recipient::NgBankTransfer {
-        bank_code: sender.0.bank_code.clone(),
-        account_number: sender.0.account_number.clone(),
-        resolution_id: None,
+    let recipient = sender.0;
+    let resolved = match adapter_for(state, payment, &recipient) {
+        Ok(adapter) => adapter.resolve_recipient(&recipient).await,
+        Err(err) => Err(AdapterError::InvalidRecipient(err.to_string())),
     };
-    let adapter = adapter_for(state, payment)?;
-    let account_name = match adapter.resolve_recipient(&recipient).await {
-        Ok(resolved) => resolved.account_name.or(sender.0.account_name.clone()),
+    let account_name = match resolved {
+        Ok(resolved) => resolved.account_name,
         Err(err @ (AdapterError::InvalidRecipient(_) | AdapterError::RecipientNotFound)) => {
             // The sender has to give another account.
             db::insert_audit(
@@ -87,19 +86,15 @@ pub async fn start_automatic(state: &AppState, payment: &PaymentIntent) -> AppRe
         .map(Some)
 }
 
-/// Starts a refund to an account the sender or an admin chose.
+/// Starts a refund to an account the sender or an admin chose, in the source currency: an NGN
+/// bank account (with a `resolution_id`), an M-Pesa number, or a mobile money wallet.
 pub async fn start_to(
     state: &AppState,
     payment: &PaymentIntent,
-    destination: RefundDestination,
+    recipient: Recipient,
     actor: &str,
 ) -> AppResult<Refund> {
-    let recipient = Recipient::NgBankTransfer {
-        bank_code: destination.bank_code,
-        account_number: destination.account_number,
-        resolution_id: Some(destination.resolution_id),
-    };
-    let adapter = adapter_for(state, payment)?;
+    let adapter = adapter_for(state, payment, &recipient)?;
     let resolved = recipients::verify_for_payment(state, adapter.as_ref(), &recipient).await?;
     start(state, payment, recipient, resolved.account_name, actor).await
 }
@@ -123,7 +118,7 @@ async fn start(
     let amount = deposit
         .received_amount
         .ok_or_else(|| AppError::Conflict("no deposit was received for this payment".into()))?;
-    let adapter = adapter_for(state, payment)?;
+    let adapter = adapter_for(state, payment, &recipient)?;
     let now = Utc::now();
     let refund = Refund {
         payment_intent_id: payment.id.clone(),
@@ -179,7 +174,7 @@ pub async fn submit(state: &AppState, refund: &Refund, adapter: &dyn PayoutAdapt
         account_name: refund.account_name.as_deref(),
         amount_minor: refund.amount,
         currency: refund.currency,
-        narration: format!("SatsBridge refund {id}"),
+        narration: format!("StellarBridge refund {id}"),
     };
     match adapter.create_payout(request).await {
         Ok(accepted) => {
@@ -272,7 +267,7 @@ pub async fn recover(state: &AppState) -> AppResult<usize> {
         let Some(payment) = db::get_payment(&state.pool, &refund.payment_intent_id).await? else {
             continue;
         };
-        let Ok(adapter) = adapter_for(state, &payment) else {
+        let Ok(adapter) = adapter_for(state, &payment, &refund.destination.0) else {
             continue;
         };
         if refund.attempts >= cfg.max_attempts || (refund.attempts > 0 && !adapter.safe_to_retry()) {
@@ -306,7 +301,7 @@ pub async fn recover(state: &AppState) -> AppResult<usize> {
         ) else {
             continue;
         };
-        let Ok(adapter) = adapter_for(state, &payment) else {
+        let Ok(adapter) = adapter_for(state, &payment, &refund.destination.0) else {
             continue;
         };
         if let Ok(Some(status)) = adapter.payout_status(reference).await {

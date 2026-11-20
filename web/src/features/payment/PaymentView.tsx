@@ -8,10 +8,12 @@ import { StatusPill } from '@/components/ui/StatusPill';
 import { useCountdown } from '@/hooks/useCountdown';
 import { useCurrencies } from '@/hooks/useCurrencies';
 import { usePaymentDetails } from '@/hooks/usePayment';
-import { getPayoutInstitutions, payPayment, refundPayment, simulateDeposit, simulatePayout, simulateRefund } from '@/lib/api';
+import { getPayoutInstitutions, payPayment, refundPayment } from '@/lib/api';
 import type { ApiError } from '@/lib/api/errors';
 import type { CurrencyInfo, PaymentDetails, PaymentStatus, StellarTx } from '@/lib/api/schemas';
 import { NgBankRecipient } from '@/features/recipient/NgBankRecipient';
+import { KePhoneRecipient } from '@/features/recipient/KePhoneRecipient';
+import { MobileMoneyRecipient } from '@/features/recipient/MobileMoneyRecipient';
 import type { RecipientDraft } from '@/features/recipient/types';
 import { formatMinor, formatWithCode } from '@/lib/money';
 import { TRACKER_STEPS, activeStepIndex, isReversal } from '@/lib/payment-status';
@@ -19,7 +21,6 @@ import { RAIL_LABELS } from '@/lib/rails';
 import { formatRecipientAccount } from '@/lib/recipient-display';
 
 const TRACKER_LABELS = ['Transfer received', 'Settled on Stellar', 'Paying recipient', 'Delivered'];
-const DEV_TOOLS = process.env.NEXT_PUBLIC_DEV_TOOLS === 'true';
 const PRE_PAYMENT: PaymentStatus[] = ['CREATED', 'QUOTED', 'AWAITING_PAYMENT'];
 
 function expOf(currencies: CurrencyInfo[], code: string): number {
@@ -71,7 +72,7 @@ function PaymentBody({ payment, currencies }: { payment: PaymentDetails; currenc
         </p>
       );
     }
-    return <p className="label">Preparing your bank transfer details…</p>;
+    return <p className="label">Preparing your payment details…</p>;
   }
 
   return (
@@ -82,7 +83,6 @@ function PaymentBody({ payment, currencies }: { payment: PaymentDetails; currenc
       {payment.status === 'REFUNDED' && <Refunded payment={payment} currencies={currencies} />}
       {payment.status === 'COMPLETED' && <Receipt payment={payment} currencies={currencies} />}
       {payment.stellar_transactions.length > 0 && <StellarTrail payment={payment} currencies={currencies} />}
-      <DevPayoutPanel payment={payment} />
       <Details payment={payment} />
     </div>
   );
@@ -115,16 +115,12 @@ function CopyRow({ label, value, copyValue }: { label: string; value: string; co
 function DepositView({ payment, currencies }: { payment: PaymentDetails; currencies: CurrencyInfo[] }) {
   const deposit = payment.deposit;
   const { secondsLeft, isExpired } = useCountdown(deposit?.expires_at);
-  const queryClient = useQueryClient();
-  const simulate = useMutation({
-    mutationFn: () => simulateDeposit(payment.id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payment', payment.id] }),
-  });
 
   if (!deposit) return null;
   if (isExpired) return <Expired payment={payment} />;
 
   const exponent = expOf(currencies, deposit.currency);
+  const mobile = deposit.method === 'mobile_money';
   const total = Math.max(1, (new Date(deposit.expires_at).getTime() - new Date(deposit.created_at).getTime()) / 1000);
   const fraction = Math.min(1, Math.max(0, secondsLeft / total));
   const circumference = 2 * Math.PI * 22;
@@ -133,7 +129,7 @@ function DepositView({ payment, currencies }: { payment: PaymentDetails; currenc
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col items-center gap-2 text-center">
-        <p className="label">Transfer exactly</p>
+        <p className="label">{mobile ? 'Pay exactly' : 'Transfer exactly'}</p>
         <p className="money text-[44px] font-semibold leading-none">
           {formatMinor(deposit.expected_amount, exponent)}
           <span className="ml-2 text-lg text-[var(--text-2)]">{deposit.currency}</span>
@@ -146,25 +142,46 @@ function DepositView({ payment, currencies }: { payment: PaymentDetails; currenc
 
       <section aria-labelledby="bank-details" className="card flex flex-col gap-2">
         <h2 id="bank-details" className="label font-semibold">
-          Send a bank transfer to
+          {mobile ? 'Pay with mobile money' : 'Send a bank transfer to'}
         </h2>
         <dl className="m-0">
-          <CopyRow label="Account number" value={deposit.account_number} />
-          <div className="row-kv">
-            <dt>Bank</dt>
-            <dd>{deposit.bank_name}</dd>
-          </div>
-          <div className="row-kv">
-            <dt>Account name</dt>
-            <dd>{deposit.account_name}</dd>
-          </div>
+          {mobile ? (
+            <>
+              <div className="row-kv">
+                <dt>Pay with</dt>
+                <dd>{deposit.bank_name}</dd>
+              </div>
+              <CopyRow label={deposit.bank_name.includes('Paybill') ? 'Paybill number' : 'Merchant number'} value={deposit.account_number} />
+              <CopyRow label="Reference" value={deposit.reference} />
+              <div className="row-kv">
+                <dt>Merchant name</dt>
+                <dd>{deposit.account_name}</dd>
+              </div>
+            </>
+          ) : (
+            <>
+              <CopyRow label="Account number" value={deposit.account_number} />
+              <div className="row-kv">
+                <dt>Bank</dt>
+                <dd>{deposit.bank_name}</dd>
+              </div>
+              <div className="row-kv">
+                <dt>Account name</dt>
+                <dd>{deposit.account_name}</dd>
+              </div>
+            </>
+          )}
           <CopyRow
             label="Amount"
             value={formatWithCode(deposit.expected_amount, exponent, deposit.currency)}
             copyValue={formatMinor(deposit.expected_amount, exponent).replace(/,/g, '')}
           />
         </dl>
-        <p className="label">This account number is for this payment only. Send the exact amount in one transfer.</p>
+        <p className="label">
+          {mobile
+            ? 'Use this reference as the account or payment reference, so we know the payment is yours. Send the exact amount in one payment.'
+            : 'This account number is for this payment only. Send the exact amount in one transfer.'}
+        </p>
       </section>
 
       <div className="flex items-center justify-center gap-3 pulse" aria-live="polite">
@@ -184,26 +201,12 @@ function DepositView({ payment, currencies }: { payment: PaymentDetails; currenc
           />
         </svg>
         <span className="text-left">
-          <span className="block font-semibold">Waiting for your transfer</span>
+          <span className="block font-semibold">Waiting for your payment</span>
           <span className="label">{secondsLeft <= 60 ? `Expires in ${secondsLeft}s` : `Valid for ${minutes} min`}</span>
         </span>
       </div>
 
-      {DEV_TOOLS && deposit.provider.endsWith('-mock') && (
-        <section aria-label="Developer tools" className="card flex flex-col gap-3 border-dashed text-sm">
-          <p className="font-semibold">Dev: simulate the bank transfer</p>
-          <p className="label">Mock collection account only. Not shown in production builds.</p>
-          <button type="button" onClick={() => simulate.mutate()} disabled={simulate.isPending} className="btn btn-quiet">
-            {simulate.isPending ? 'Sending…' : 'I have sent the transfer'}
-          </button>
-          {simulate.isError && (
-            <p role="alert" className="error-text">
-              {simulate.error.message}
-            </p>
-          )}
-        </section>
-      )}
-      <p className="label text-center">Keep this page open. We confirm as soon as your bank transfer arrives.</p>
+      <p className="label text-center">Keep this page open. We confirm as soon as your payment arrives.</p>
     </div>
   );
 }
@@ -256,13 +259,13 @@ function Outcome({ payment, currencies }: { payment: PaymentDetails; currencies:
       if (payment.payout?.status === 'reversed') {
         return (
           <Notice tone="failed" pill={<StatusPill tone="failed" label="Payment reversed" />}>
-            The payout partner reversed this payment after it had been reported as delivered. Your naira is being refunded.
+            The payout partner reversed this payment after it had been reported as delivered. Your money is being refunded.
           </Notice>
         );
       }
       return (
         <Notice tone="pending" pill={<StatusPill tone="pending" label="Refund needed" />}>
-          {payment.failure_reason ?? 'This payment could not be completed.'} Your naira is being refunded.
+          {payment.failure_reason ?? 'This payment could not be completed.'} Your money is being refunded.
         </Notice>
       );
     case 'REFUNDED':
@@ -340,17 +343,9 @@ function RefundPanel({ payment, currencies }: { payment: PaymentDetails; currenc
   const amount = refund?.amount ?? payment.deposit?.received_amount ?? payment.source_amount;
   const exponent = expOf(currencies, payment.source_currency);
   const start = useMutation({
-    mutationFn: (draft: RecipientDraft) => {
-      if (draft.recipient.rail !== 'NG_BANK_TRANSFER') throw new Error('Choose a Nigerian bank account');
-      const { bank_code, account_number, resolution_id } = draft.recipient;
-      return refundPayment(payment.id, { bank_code, account_number, resolution_id });
-    },
+    mutationFn: (draft: RecipientDraft) => refundPayment(payment.id, draft.recipient),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payment', payment.id] }),
     onError: () => setFormKey((k) => k + 1),
-  });
-  const simulate = useMutation({
-    mutationFn: (status: 'success' | 'failed') => simulateRefund(payment.id, status),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payment', payment.id] }),
   });
   const serverError = start.error as ApiError | Error | null;
 
@@ -362,19 +357,8 @@ function RefundPanel({ payment, currencies }: { payment: PaymentDetails; currenc
         </h2>
         <p className="label">
           Refunding <strong className="money text-[var(--text)]">{formatWithCode(amount, exponent, payment.source_currency)}</strong> to{' '}
-          {refund.account_name ?? 'your account'} ({refund.destination_reference}). Bank transfers usually arrive within minutes.
+          {refund.account_name ?? 'your account'} ({refund.destination_reference}). Refunds usually arrive within minutes.
         </p>
-        {DEV_TOOLS && refund.provider.endsWith('-mock') && refund.status === 'submitted' && (
-          <div className="flex flex-wrap gap-2 border-t border-dashed border-[var(--hairline)] pt-3 text-sm">
-            <span className="label">Dev: simulate refund</span>
-            <button type="button" onClick={() => simulate.mutate('success')} disabled={simulate.isPending} className="btn btn-quiet">
-              Success
-            </button>
-            <button type="button" onClick={() => simulate.mutate('failed')} disabled={simulate.isPending} className="btn btn-quiet">
-              Failed
-            </button>
-          </div>
-        )}
       </section>
     );
   }
@@ -387,11 +371,11 @@ function RefundPanel({ payment, currencies }: { payment: PaymentDetails; currenc
       <p className="label">
         {refund?.status === 'failed'
           ? `The refund to ${refund.destination_reference} did not go through${refund.failure_reason ? ` (${refund.failure_reason})` : ''}. Choose another account.`
-          : 'Your bank did not tell us which account you paid from.'}{' '}
-        We will send <strong className="money text-[var(--text)]">{formatWithCode(amount, exponent, payment.source_currency)}</strong> to the Nigerian
-        bank account you choose.
+          : 'Your bank or mobile money provider did not tell us which account you paid from.'}{' '}
+        We will send <strong className="money text-[var(--text)]">{formatWithCode(amount, exponent, payment.source_currency)}</strong> to the{' '}
+        {payment.source_currency} account you choose.
       </p>
-      <NgBankRecipient key={formKey} onConfirm={(draft) => start.mutate(draft)} />
+      <RefundAccountForm key={formKey} payment={payment} currencies={currencies} onConfirm={(draft) => start.mutate(draft)} />
       {start.isPending && <p className="label">Starting your refund…</p>}
       {serverError && (
         <p role="alert" className="error-text">
@@ -400,6 +384,24 @@ function RefundPanel({ payment, currencies }: { payment: PaymentDetails; currenc
       )}
     </section>
   );
+}
+
+// The refund goes out on the source currency's own rail: NGN bank, M-Pesa, or mobile money.
+function RefundAccountForm({
+  payment,
+  currencies,
+  onConfirm,
+}: {
+  payment: PaymentDetails;
+  currencies: CurrencyInfo[];
+  onConfirm: (draft: RecipientDraft) => void;
+}) {
+  const rails = currencies.find((c) => c.code === payment.source_currency)?.payout_rails ?? [];
+  const rail = rails[0];
+  if (!rail) return <p className="label">Refunds in {payment.source_currency} are not available yet. Contact support.</p>;
+  if (rail.rail === 'NG_BANK_TRANSFER') return <NgBankRecipient onConfirm={onConfirm} />;
+  if (rail.rail === 'KE_MOBILE_MONEY') return <KePhoneRecipient onConfirm={onConfirm} />;
+  return <MobileMoneyRecipient currency={payment.source_currency} countries={rail.countries ?? []} onConfirm={onConfirm} />;
 }
 
 function Refunded({ payment, currencies }: { payment: PaymentDetails; currencies: CurrencyInfo[] }) {
@@ -522,34 +524,6 @@ function Row({ label, value }: { label: string; value: string }) {
       <dt>{label}</dt>
       <dd className="money">{value}</dd>
     </div>
-  );
-}
-
-function DevPayoutPanel({ payment }: { payment: PaymentDetails }) {
-  const queryClient = useQueryClient();
-  const simulate = useMutation({
-    mutationFn: (status: 'success' | 'failed' | 'reversed') => simulatePayout(payment.id, status),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payment', payment.id] }),
-  });
-  const enabled = DEV_TOOLS && payment.payout?.provider.endsWith('-mock') === true;
-  if (!enabled || payment.payout?.status !== 'submitted') return null;
-  return (
-    <section aria-label="Developer tools" className="card flex flex-col gap-3 border-dashed text-sm">
-      <p className="font-semibold">Dev: simulate payout</p>
-      <p className="label">Mock provider only. Not shown in production builds.</p>
-      <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={() => simulate.mutate('success')} disabled={simulate.isPending} className="btn btn-quiet">
-          Success
-        </button>
-        <button type="button" onClick={() => simulate.mutate('failed')} disabled={simulate.isPending} className="btn btn-quiet">
-          Failed
-        </button>
-        <button type="button" onClick={() => simulate.mutate('reversed')} disabled={simulate.isPending} className="btn btn-quiet">
-          Reversed
-        </button>
-      </div>
-      {simulate.isError && <p role="alert" className="error-text">{simulate.error.message}</p>}
-    </section>
   );
 }
 

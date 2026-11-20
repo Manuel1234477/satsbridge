@@ -1,9 +1,9 @@
 use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256, Sha512};
+use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub const SIGNATURE_HEADER: &str = "x-satsbridge-signature";
+pub const SIGNATURE_HEADER: &str = "x-stellarbridge-signature";
 
 /// Hex HMAC-SHA256 of the raw request body.
 pub fn sign(secret: &str, body: &[u8]) -> String {
@@ -19,16 +19,6 @@ pub fn verify_signature(secret: &str, body: &[u8], signature: Option<&str>) -> b
         return false;
     };
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
-    mac.update(body);
-    mac.verify_slice(&expected).is_ok()
-}
-
-/// Constant-time check of a hex HMAC-SHA512 signature (Bitnob webhooks).
-pub fn verify_hmac_sha512(secret: &str, body: &[u8], signature: Option<&str>) -> bool {
-    let Some(Ok(expected)) = signature.map(|s| hex::decode(s.trim())) else {
-        return false;
-    };
-    let mut mac = Hmac::<Sha512>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
     mac.update(body);
     mac.verify_slice(&expected).is_ok()
 }

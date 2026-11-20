@@ -9,7 +9,8 @@ use std::sync::{
 
 use axum::http::{Method, StatusCode};
 use common::*;
-use satsbridge::{
+use serde_json::{Value, json};
+use stellarbridge::{
     adapters::{
         AdapterError,
         payout::{Institution, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient},
@@ -17,7 +18,6 @@ use satsbridge::{
     domain::{Currency, Rail, Recipient},
     services::{payments::PayoutEventStatus, recovery},
 };
-use serde_json::{Value, json};
 
 // --- auth and limits ---
 
@@ -52,15 +52,6 @@ async fn payments_are_private_to_their_user() {
             .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
-    let (status, _) = app
-        .raw(
-            Method::POST,
-            &format!("/api/v1/dev/payments/{id}/deposit"),
-            Some(&other),
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
 
     assert_eq!(
         app.raw(Method::GET, "/api/v1/transactions", Some(&other), None).await.1,
@@ -184,7 +175,7 @@ impl PayoutAdapter for FlakyPayout {
     }
 }
 
-async fn flaky_app(flaky: Arc<FlakyPayout>, tweak: impl FnOnce(&mut satsbridge::Config)) -> TestApp {
+async fn flaky_app(flaky: Arc<FlakyPayout>, tweak: impl FnOnce(&mut stellarbridge::Config)) -> TestApp {
     build(120, move |config, payouts| {
         config.recovery.base_backoff_secs = 0;
         tweak(config);
@@ -390,7 +381,7 @@ async fn admin_summary_reports_metrics() {
     assert_eq!(summary["corridors"][0]["completed"], 1);
     assert!(summary["avg_settlement_secs"].is_number(), "{summary}");
     assert_eq!(summary["ledger"], "simulated");
-    assert_eq!(summary["collections"], json!(["NGN"]));
+    assert_eq!(summary["collections"].as_array().unwrap().len(), 6);
     assert!(
         summary["rails"]
             .as_array()

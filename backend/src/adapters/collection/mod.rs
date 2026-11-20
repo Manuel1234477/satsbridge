@@ -1,6 +1,7 @@
-//! Collection rails: how the sender's money comes in. For NGN this is a bank transfer to a
-//! per-payment virtual account; the provider reports the deposit on
-//! `POST /api/v1/webhooks/collections`.
+//! Collection rails: how the sender's money comes in, one per source currency. NGN is a bank
+//! transfer to a per-payment virtual account; KES is an M-Pesa Paybill payment; GHS, XOF, XAF
+//! and GNF are mobile money merchant payments. Either way the provider reports the deposit on
+//! `POST /api/v1/webhooks/collections`, with the account it came from (refunds go back there).
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -8,8 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use super::AdapterError;
 use crate::domain::Currency;
-
-pub mod mock;
 
 pub struct DepositRequest<'a> {
     /// The payment intent ID. Providers must return the same account for repeats.
@@ -19,9 +18,23 @@ pub struct DepositRequest<'a> {
     pub expires_at: DateTime<Utc>,
 }
 
-/// Where the sender sends their bank transfer.
+/// How the sender pays in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(rename_all = "snake_case")]
+pub enum DepositMethod {
+    /// Bank transfer to `account_number` at `bank_name`.
+    BankTransfer,
+    /// Mobile money payment to the merchant/Paybill number `account_number` on `bank_name`
+    /// (the network), quoting `reference`.
+    MobileMoney,
+}
+
+/// Where the sender sends their money.
 #[derive(Clone, Debug, Serialize)]
 pub struct DepositInstructions {
+    pub method: DepositMethod,
+    /// Bank, or mobile money network(s).
     pub bank_name: String,
     pub account_number: String,
     pub account_name: String,
@@ -29,15 +42,6 @@ pub struct DepositInstructions {
     /// narration reference for pooled accounts).
     pub reference: String,
     pub provider_reference: Option<String>,
-}
-
-/// The account a deposit came from, as reported by the provider. Refunds go back here.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SenderAccount {
-    pub bank_code: String,
-    pub account_number: String,
-    #[serde(default)]
-    pub account_name: Option<String>,
 }
 
 #[async_trait]

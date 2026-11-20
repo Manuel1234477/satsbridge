@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use satsbridge::{
+use stellarbridge::{
     adapters::stellar::{
         STROOPS_PER_UNIT, StellarLedger, TESTNET_HORIZON, TESTNET_PASSPHRASE,
         horizon::{HorizonConfig, HorizonLedger},

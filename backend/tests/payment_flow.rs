@@ -7,13 +7,10 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use common::*;
-use satsbridge::{
-    adapters::{bitnob::BitnobConfig, stellar::simulated::Inject},
-    domain::Currency,
-    security::SIGNATURE_HEADER,
-    services::recovery,
-};
 use serde_json::json;
+use stellarbridge::{
+    adapters::stellar::simulated::Inject, domain::Currency, security::SIGNATURE_HEADER, services::recovery,
+};
 
 #[tokio::test]
 async fn ngn_to_kes_settles_on_stellar_and_completes() {
@@ -47,7 +44,7 @@ async fn ngn_to_kes_settles_on_stellar_and_completes() {
         "reference": deposit["reference"],
         "amount_minor": SEND_KOBO,
         "currency": "NGN",
-        "sender": { "bank_code": "058", "account_number": "0123456789", "account_name": "ADA OBI" },
+        "sender": { "rail": "NG_BANK_TRANSFER", "bank_code": "058", "account_number": "0123456789" },
     });
     let (status, body) = app
         .webhook("/api/v1/webhooks/collections", PROVIDER_SECRET, event.clone())
@@ -162,7 +159,7 @@ async fn underpaid_deposit_is_refunded_without_touching_stellar() {
 async fn refund_needs_an_account_when_the_source_is_unknown() {
     let app = app_with(120).await;
     let (id, _) = app.kes_payment_awaiting_deposit().await;
-    app.deposit(&id, Some(json!({ "amount_minor": 1_000, "sender": null })))
+    app.deposit(&id, Some(json!({ "amount_minor": 1_000, "anonymous": true })))
         .await;
     let details = app.status_of(&id).await;
     assert_eq!(details["status"], "REFUND_PENDING");
@@ -173,7 +170,7 @@ async fn refund_needs_an_account_when_the_source_is_unknown() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // Without a resolution the account isn't accepted.
-    let unresolved = json!({ "bank_code": "044", "account_number": "1112223334", "resolution_id": "res_x" });
+    let unresolved = json!({ "rail": "NG_BANK_TRANSFER", "bank_code": "044", "account_number": "1112223334", "resolution_id": "res_x" });
     assert_eq!(
         app.call(Method::POST, &refund_url, Some(unresolved)).await.0,
         StatusCode::BAD_REQUEST
@@ -190,7 +187,7 @@ async fn refund_needs_an_account_when_the_source_is_unknown() {
         .call(
             Method::POST,
             &refund_url,
-            Some(json!({ "bank_code": "044", "account_number": "1112223334", "resolution_id": resolved["resolution_id"] })),
+            Some(json!({ "rail": "NG_BANK_TRANSFER", "bank_code": "044", "account_number": "1112223334", "resolution_id": resolved["resolution_id"] })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{refund}");
@@ -202,7 +199,7 @@ async fn refund_needs_an_account_when_the_source_is_unknown() {
         .call(
             Method::POST,
             &refund_url,
-            Some(json!({ "bank_code": "044", "account_number": "1112223334", "resolution_id": resolved["resolution_id"] })),
+            Some(json!({ "rail": "NG_BANK_TRANSFER", "bank_code": "044", "account_number": "1112223334", "resolution_id": resolved["resolution_id"] })),
         )
         .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -214,7 +211,7 @@ async fn refund_needs_an_account_when_the_source_is_unknown() {
         .call(
             Method::POST,
             &refund_url,
-            Some(json!({ "bank_code": "044", "account_number": "1112223334", "resolution_id": resolved["resolution_id"] })),
+            Some(json!({ "rail": "NG_BANK_TRANSFER", "bank_code": "044", "account_number": "1112223334", "resolution_id": resolved["resolution_id"] })),
         )
         .await;
     assert_eq!((status, refund["status"].as_str()), (StatusCode::OK, Some("submitted")));
@@ -328,14 +325,10 @@ async fn rejects_bad_signatures_and_unsupported_corridors() {
         assert_eq!(app.send(req).await.0, StatusCode::UNAUTHORIZED, "{path}");
     }
     // There is no endpoint that settles a payment on the caller's word.
-    let (status, _) = app.call(Method::POST, "/api/v1/dev/payments/x/settle", None).await;
+    let (status, _) = app.call(Method::POST, "/api/v1/payments/x/settle", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     for (body, why) in [
-        (
-            json!({ "source_currency": "KES", "destination_currency": "NGN", "amount": 100_000 }),
-            "no KES collection",
-        ),
         (
             json!({ "source_currency": "NGN", "destination_currency": "NGN", "amount": 100_000 }),
             "same currency",
@@ -353,11 +346,15 @@ async fn rejects_bad_signatures_and_unsupported_corridors() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {body}");
     }
 
-    // NGN is the default source currency.
-    let quote = app
-        .quote(json!({ "destination_currency": "KES", "amount": SEND_KOBO }))
+    // The sender's currency must be given.
+    let (status, _) = app
+        .call(
+            Method::POST,
+            "/api/v1/quotes",
+            Some(json!({ "destination_currency": "KES", "amount": SEND_KOBO })),
+        )
         .await;
-    assert_eq!(quote["source_currency"], "NGN");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // A deposit for an unknown reference is refused (and retried by the provider).
     let event = json!({ "event_id": "x", "reference": "nope", "amount_minor": 1, "currency": "NGN" });
@@ -407,7 +404,7 @@ async fn expired_quotes_and_limits_are_enforced() {
     };
     assert_eq!(find("NGN")["can_send"], true);
     assert_eq!(find("NGN")["stellar_asset"]["code"], "NGN");
-    assert_eq!(find("KES")["can_send"], false);
+    assert_eq!(find("KES")["can_send"], true);
     assert_eq!(find("KES")["payout_rails"][0]["rail"], "KE_MOBILE_MONEY");
     assert_eq!(find("GHS")["payout_rails"][0]["rail"], "MOBILE_MONEY");
 }
@@ -433,64 +430,6 @@ async fn destination_side_quotes_deliver_the_exact_amount() {
 }
 
 #[tokio::test]
-async fn bitnob_webhooks_are_verified_and_mapped() {
-    use hmac::{Hmac, Mac};
-    const BITNOB_SECRET: &str = "bitnob-webhook-secret";
-    let app = build(120, |config, _| {
-        config.payouts.bitnob = Some(BitnobConfig {
-            base_url: "http://127.0.0.1:9".into(),
-            client_id: "c".into(),
-            client_secret: "s".into(),
-            webhook_secret: BITNOB_SECRET.into(),
-            callback_url: "https://example.test/api/v1/webhooks/bitnob".into(),
-            from_asset: "USDC".into(),
-            countries: vec!["KE".into()],
-        });
-    })
-    .await;
-    let (id, _) = app.kes_payment_awaiting_deposit().await;
-    app.deposit(&id, None).await;
-    let reference = app.status_of(&id).await["payout"]["provider_reference"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let send = |event: &str, event_id: &str, secret: &str| {
-        let body = json!({ "event": event, "event_id": event_id, "data": { "id": reference, "status": "success" } })
-            .to_string();
-        let mut mac = Hmac::<sha2::Sha512>::new_from_slice(secret.as_bytes()).unwrap();
-        mac.update(body.as_bytes());
-        Request::post("/api/v1/webhooks/bitnob")
-            .header("content-type", "application/json")
-            .header("x-bitnob-signature", hex::encode(mac.finalize().into_bytes()))
-            .body(Body::from(body))
-            .unwrap()
-    };
-
-    assert_eq!(
-        app.send(send("payouts.withdrawal.success", "e0", "wrong")).await.0,
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        app.send(send("payouts.processing", "e1", BITNOB_SECRET)).await.1["outcome"],
-        "ignored"
-    );
-    assert_eq!(
-        app.send(send("payouts.withdrawal.success", "e2", BITNOB_SECRET))
-            .await
-            .1["outcome"],
-        "processed"
-    );
-    assert_eq!(
-        app.send(send("payouts.withdrawal.success", "e2", BITNOB_SECRET))
-            .await
-            .1["outcome"],
-        "duplicate"
-    );
-    assert_eq!(app.status_of(&id).await["status"], "COMPLETED");
-}
-
-#[tokio::test]
 async fn payout_reversal_after_completion_reopens_for_refund() {
     let app = app_with(120).await;
     let (id, _) = app.kes_payment_awaiting_deposit().await;
@@ -511,4 +450,127 @@ async fn payout_reversal_after_completion_reopens_for_refund() {
         steps(&[("settle", "succeeded"), ("redeem", "succeeded")])
     );
     assert_eq!(details["refund"]["status"], "submitted");
+}
+
+#[tokio::test]
+async fn kes_sender_pays_by_mpesa_and_nigerian_recipient_gets_naira() {
+    let app = app_with(120).await;
+    // KSh 10,000 -> NGN bank account.
+    let quote = app
+        .quote(json!({ "source_currency": "KES", "destination_currency": "NGN", "amount": 1_000_000 }))
+        .await;
+    assert_eq!(quote["conversion_path"], json!(["KES", "USD", "NGN"]));
+    // KSh 9,900 after the fee = $76.15 = ₦114,230.77, less the 0.5% buffer.
+    assert_eq!(quote["destination_amount"], 11_365_961);
+    let (_, resolved) = app
+        .call(
+            Method::POST,
+            "/api/v1/recipients/resolve",
+            Some(json!({ "currency": "NGN", "bank_code": "058", "account_number": "0123456789" })),
+        )
+        .await;
+    let id = app
+        .create_payment(
+            &quote,
+            json!({ "rail": "NG_BANK_TRANSFER", "bank_code": "058", "account_number": "0123456789", "resolution_id": resolved["resolution_id"] }),
+        )
+        .await;
+
+    // Pay-in instructions are an M-Pesa Paybill with a per-payment reference.
+    let deposit = app.pay(&id).await;
+    assert_eq!(deposit["method"], "mobile_money");
+    assert_eq!(deposit["bank_name"], "M-Pesa Paybill");
+    assert!(deposit["reference"].as_str().unwrap().starts_with("SB"));
+    assert_eq!(deposit["currency"], "KES");
+
+    // Reported by the provider with the sender's M-Pesa number.
+    let event = json!({
+        "event_id": "mpesa-1",
+        "reference": deposit["reference"],
+        "amount_minor": 1_000_000,
+        "currency": "KES",
+        "sender": { "rail": "KE_MOBILE_MONEY", "phone_number": "0722000111" },
+    });
+    let (_, body) = app
+        .webhook("/api/v1/webhooks/collections", PROVIDER_SECRET, event)
+        .await;
+    assert_eq!(body["outcome"], "processed");
+    let details = app.status_of(&id).await;
+    assert_eq!(details["status"], "PAYOUT_PENDING", "{details}");
+    assert_eq!(details["payout"]["provider"], "ngn-mock");
+    assert_eq!(
+        app.ledger.treasury_balance(Currency::Kes),
+        1_000_000_000,
+        "the KSh 100 fee"
+    );
+
+    // The NGN payout fails: the conversion is undone and the shillings go back by M-Pesa.
+    app.mock_payout(&id, "failed").await;
+    let details = app.status_of(&id).await;
+    assert_eq!(details["status"], "REFUND_PENDING");
+    assert_eq!(
+        stellar_steps(&details),
+        steps(&[("settle", "succeeded"), ("reverse", "succeeded")])
+    );
+    assert_eq!(details["refund"]["currency"], "KES");
+    assert_eq!(details["refund"]["amount"], 1_000_000);
+    assert_eq!(details["refund"]["provider"], "tando-mock");
+    assert_eq!(details["refund"]["destination_reference"], "******0111");
+    app.mock_refund(&id, "success").await;
+    assert_eq!(app.status_of(&id).await["status"], "REFUNDED");
+}
+
+#[tokio::test]
+async fn senders_can_pay_in_any_supported_currency() {
+    let app = app_with(120).await;
+    let recipients = [
+        (
+            "KES",
+            json!({ "rail": "KE_MOBILE_MONEY", "phone_number": "0712345678" }),
+        ),
+        (
+            "GHS",
+            json!({ "rail": "MOBILE_MONEY", "country": "GH", "provider_code": "MTN", "phone_number": "0241234567", "account_name": "Kwame Mensah" }),
+        ),
+        (
+            "XAF",
+            json!({ "rail": "MOBILE_MONEY", "country": "CM", "provider_code": "MTN", "phone_number": "677123456", "account_name": "Jean Mbarga" }),
+        ),
+    ];
+    // Every source with a mobile money (or bank) pay-in, into a destination it isn't.
+    for (source, amount) in [("XOF", 100_000), ("GHS", 150_000), ("GNF", 2_000_000), ("XAF", 100_000)] {
+        let (destination, recipient) = recipients.iter().find(|(d, _)| *d != source).unwrap();
+        let quote = app
+            .quote(json!({ "source_currency": source, "destination_currency": destination, "amount": amount }))
+            .await;
+        assert_eq!(quote["conversion_path"], json!([source, "USD", destination]));
+        let id = app.create_payment(&quote, recipient.clone()).await;
+        let deposit = app.pay(&id).await;
+        assert_eq!(deposit["method"], "mobile_money", "{source}");
+        app.deposit(&id, None).await;
+        app.mock_payout(&id, "success").await;
+        let details = app.status_of(&id).await;
+        assert_eq!(details["status"], "COMPLETED", "{source} -> {destination}: {details}");
+    }
+
+    // A failed XOF payment is refunded to the sender's own mobile money wallet.
+    let quote = app
+        .quote(json!({ "source_currency": "XOF", "destination_currency": "KES", "amount": 100_000 }))
+        .await;
+    let id = app
+        .create_payment(
+            &quote,
+            json!({ "rail": "KE_MOBILE_MONEY", "phone_number": "0712345678" }),
+        )
+        .await;
+    app.pay(&id).await;
+    app.deposit(&id, None).await;
+    app.mock_payout(&id, "failed").await;
+    let refund = app.status_of(&id).await["refund"].clone();
+    assert_eq!(refund["currency"], "XOF");
+    assert_eq!(refund["destination_reference"], "SN:WAVE:*****0111");
+    assert_eq!(refund["status"], "submitted");
+
+    let (_, currencies) = app.raw(Method::GET, "/api/v1/currencies", None, None).await;
+    assert!(currencies.as_array().unwrap().iter().all(|c| c["can_send"] == true));
 }

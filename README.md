@@ -1,31 +1,31 @@
-# SatsBridge
+# StellarBridge
 
-Cross-border payments from Nigerian naira to other African currencies, settled on the [Stellar](https://stellar.org) network.
+Cross-border payments between African currencies, settled on the [Stellar](https://stellar.org) network.
 
-A sender in Nigeria pays in naira by bank transfer. SatsBridge settles the conversion on Stellar and pays the recipient in their own currency: Kenyan shillings by M-Pesa, Ghanaian cedis, CFA francs (XOF, XAF) or Guinean francs by mobile money. Stellar is the settlement layer underneath. The sender and recipient only ever see their own currencies.
+A sender pays in their own currency: Nigerian naira by bank transfer, or Kenyan shillings, Ghanaian cedis, CFA francs (XOF, XAF) or Guinean francs by mobile money. StellarBridge settles the conversion on Stellar and pays the recipient in theirs, by M-Pesa, mobile money or bank. Stellar is the settlement layer underneath. The sender and recipient only ever see their own currencies.
 
-**Corridors:** NGN → KES, GHS, XOF, XAF, GNF
+**Corridors:** any of NGN, KES, GHS, XOF, XAF, GNF → any other
 **Network:** Stellar testnet
-**Status:** hackathon MVP, sandbox and demo use only. Settlement runs on real Stellar testnet. Bank collection and payouts are mocks unless Bitnob is configured. See [Implementation status](docs/implementation-status.md).
+**Status:** hackathon MVP, sandbox and demo use only. Settlement runs on real Stellar testnet. Bank collection and payouts have no real providers yet: the provider interfaces exist and nothing is registered. See [Implementation status](docs/implementation-status.md).
 
 ## How a payment flows
 
 ```
-Quote (Stellar DEX) → Payment → Bank transfer in NGN → Settled on Stellar → Local payout → Completed
+Quote (Stellar DEX) → Payment → Pay in (bank or mobile money) → Settled on Stellar → Local payout → Completed
 ```
 
-1. **Quote.** The rate comes from the Stellar DEX path NGN → USD → KES. The quoted payout is guaranteed.
-2. **Pay in naira.** The sender gets a one-off account number and makes an ordinary bank transfer.
+1. **Quote.** The rate comes from the Stellar DEX path, e.g. NGN → USD → KES or KES → USD → GHS. The quoted payout is guaranteed.
+2. **Pay in.** In naira, the sender gets a one-off account number for an ordinary bank transfer. In the other currencies, a mobile money merchant or M-Pesa Paybill number and a payment reference.
 3. **Settle on Stellar.** One atomic transaction mints the deposit as an `NGN` token and converts it into `KES` with a strict-send path payment. Its minimum output is the quoted payout.
 4. **Pay out.** The recipient is paid locally by M-Pesa, mobile money or bank. The `KES` tokens are then burned.
-5. **If anything fails,** the conversion is reversed on Stellar and the naira goes back to the account it came from.
+5. **If anything fails,** the conversion is reversed on Stellar and the money goes back to the account it came from, in the sender's currency.
 
 | Piece | Implementation |
 |---|---|
 | Settlement | Stellar testnet via Horizon: our issuer's fiat tokens, strict-send path payments over the DEX, transactions signed in Rust (`stellar-xdr`) |
 | Liquidity | A market-maker account with two-sided offers against a `USD` bridge token, priced from Coinbase and CoinGecko (`stellar_setup`) |
-| NGN collection | Per-payment virtual bank account (mock), deposit webhook |
-| Payouts | M-Pesa (Tando mock or Bitnob), mobile money (mock or Bitnob per country), NGN bank for refunds |
+| Collection (pay-in) | Provider interface and signed deposit webhook; no provider wired yet |
+| Payouts | Provider interface and signed result webhook; no provider wired yet |
 | Senders | Anonymous per-user bearer tokens; automatic refunds to the source account |
 | Operations | Admin API, recovery worker (Stellar transactions, payouts, refunds), rate limiting |
 
@@ -33,10 +33,9 @@ Quote (Stellar DEX) → Payment → Bank transfer in NGN → Settled on Stellar 
 
 | Path | Contents |
 |---|---|
-| [`backend/`](backend/) | Rust API (axum, tokio, sqlx/SQLite), the Stellar settlement layer, the `stellar_setup` testnet tool and a local Bitnob stand-in. Setup, configuration, API reference and demos are in the [backend README](backend/README.md). |
-| [`web/`](web/) | Next.js sender app: quote, pay by bank transfer, track the settlement on Stellar, get a receipt or refund. Runs against the backend or an in-browser mock. See the [web README](web/README.md). |
+| [`backend/`](backend/) | Rust API (axum, tokio, sqlx/SQLite), the Stellar settlement layer, and the `stellar_setup` testnet tool. Setup, configuration, API reference and demos are in the [backend README](backend/README.md). |
+| [`web/`](web/) | Next.js sender app: quote, pay by bank transfer, track the settlement on Stellar, get a receipt or refund. Runs against the backend. See the [web README](web/README.md). |
 | [`docs/implementation-status.md`](docs/implementation-status.md) | What is built, what has been verified against live services, and what's left |
-| [`docs/prd-addendum-ngn-payout.md`](docs/prd-addendum-ngn-payout.md) | Requirements for Naira payouts |
 
 ## Quick start
 
@@ -58,8 +57,7 @@ Then the web app:
 ```bash
 cd web
 npm install --legacy-peer-deps
-NEXT_PUBLIC_DEV_TOOLS=true npm run dev   # http://localhost:3000, against the backend
-NEXT_PUBLIC_MOCK_API=true npm run dev    # or with no backend at all
+npm run dev   # http://localhost:3000, against the backend
 ```
 
 ## Disclaimer

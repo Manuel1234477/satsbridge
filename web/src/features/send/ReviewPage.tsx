@@ -137,7 +137,7 @@ export function ReviewPage({ quote, rail, currencies, onBack, onPaid }: ReviewPa
 
           <div className="dock">
             <button type="button" onClick={() => submit.mutate(draft)} disabled={isExpired || submit.isPending} className="btn btn-accent btn-block">
-              {submit.isPending ? 'Creating payment…' : paymentId ? 'Try getting the bank details again' : 'Confirm and continue'}
+              {submit.isPending ? 'Creating payment…' : paymentId ? 'Try getting the payment details again' : 'Confirm and continue'}
             </button>
             <button type="button" onClick={() => setDraft(null)} disabled={submit.isPending} className="btn btn-quiet btn-block">
               Change recipient

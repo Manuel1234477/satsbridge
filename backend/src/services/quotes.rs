@@ -27,7 +27,7 @@ const MAX_AMOUNT_MINOR: i64 = 100_000_000_000_000;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateQuoteRequest {
-    #[serde(default = "default_source")]
+    /// What the sender pays in: any currency with a collection rail.
     pub source_currency: Currency,
     pub destination_currency: Currency,
     /// Minor units of the currency selected by `amount_side`.
@@ -37,10 +37,6 @@ pub struct CreateQuoteRequest {
     /// Payout rail; defaults to the currency's bank/mobile-money rail.
     #[serde(default)]
     pub rail: Option<Rail>,
-}
-
-fn default_source() -> Currency {
-    Currency::Ngn
 }
 
 #[derive(Debug, PartialEq, Eq)]

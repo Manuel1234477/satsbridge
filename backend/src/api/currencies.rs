@@ -44,7 +44,7 @@ pub async fn list(State(state): State<AppState>) -> Json<Vec<CurrencyInfo>> {
             stellar_asset: state.ledger.asset(code),
             can_send: state.collections.get(code).is_some(),
             payout_rails: {
-                let mut rails: Vec<_> = state
+                let rails: Vec<_> = state
                     .payouts
                     .for_currency(code)
                     .map(|a| PayoutInfo {
@@ -56,7 +56,6 @@ pub async fn list(State(state): State<AppState>) -> Json<Vec<CurrencyInfo>> {
                         countries: a.countries(),
                     })
                     .collect();
-                rails.sort_by_key(|r| r.provider.ends_with("-mock"));
                 rails
             },
         })

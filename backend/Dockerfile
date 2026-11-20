@@ -6,9 +6,9 @@ COPY src ./src
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
-RUN useradd --system --uid 10001 satsbridge && mkdir /data && chown satsbridge /data
-COPY --from=build /app/target/release/satsbridge /usr/local/bin/satsbridge
-USER satsbridge
-ENV BIND_ADDR=0.0.0.0:8080 DATABASE_URL=sqlite:///data/satsbridge.db
+RUN useradd --system --uid 10001 stellarbridge && mkdir /data && chown stellarbridge /data
+COPY --from=build /app/target/release/stellarbridge /usr/local/bin/stellarbridge
+USER stellarbridge
+ENV BIND_ADDR=0.0.0.0:8080 DATABASE_URL=sqlite:///data/stellarbridge.db
 EXPOSE 8080
-CMD ["satsbridge"]
+CMD ["stellarbridge"]

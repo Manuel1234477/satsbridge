@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqliteConnection, SqliteExecutor, types::Json};
 
 use crate::{
-    adapters::collection::SenderAccount,
+    adapters::collection::DepositMethod,
     domain::{Currency, PaymentStatus, Rail, Recipient},
 };
 
@@ -87,11 +87,12 @@ pub enum DepositStatus {
     Expired,
 }
 
-/// The sender's bank transfer into a collection account.
+/// The sender's payment into a collection account (bank transfer or mobile money).
 #[derive(Clone, Debug, Serialize, FromRow)]
 pub struct Deposit {
     pub payment_intent_id: String,
     pub provider: String,
+    pub method: DepositMethod,
     pub currency: Currency,
     pub expected_amount: i64,
     pub reference: String,
@@ -102,8 +103,9 @@ pub struct Deposit {
     pub provider_reference: Option<String>,
     pub status: DepositStatus,
     pub received_amount: Option<i64>,
+    /// Where the money came from, as a payout destination in the source currency.
     #[serde(skip_serializing)]
-    pub sender_account: Option<Json<SenderAccount>>,
+    pub sender_account: Option<Json<Recipient>>,
     pub expires_at: DateTime<Utc>,
     pub received_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -389,13 +391,14 @@ pub async fn transition(
 
 pub async fn insert_deposit<'e>(db: impl SqliteExecutor<'e>, d: &Deposit) -> sqlx::Result<()> {
     sqlx::query(
-        "INSERT INTO deposits (payment_intent_id, provider, currency, expected_amount, reference,
+        "INSERT INTO deposits (payment_intent_id, provider, method, currency, expected_amount, reference,
             bank_name, account_number, account_name, provider_reference, status, received_amount,
             sender_account, expires_at, received_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&d.payment_intent_id)
     .bind(&d.provider)
+    .bind(d.method)
     .bind(d.currency)
     .bind(d.expected_amount)
     .bind(&d.reference)
@@ -436,7 +439,7 @@ pub async fn mark_deposit_received<'e>(
     db: impl SqliteExecutor<'e>,
     payment_id: &str,
     amount: i64,
-    sender: Option<&SenderAccount>,
+    sender: Option<&Recipient>,
     at: DateTime<Utc>,
 ) -> sqlx::Result<bool> {
     let updated = sqlx::query(

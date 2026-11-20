@@ -30,7 +30,7 @@ pub struct ResolveResponse {
     pub expires_at: DateTime<Utc>,
 }
 
-/// NGN account-name enquiry (addendum FR-NGN-03). The sender must see and confirm the name.
+/// NGN account-name enquiry. The sender must see and confirm the name.
 pub async fn resolve(state: &AppState, req: ResolveRequest) -> AppResult<ResolveResponse> {
     if req.currency != Currency::Ngn {
         return Err(AppError::Validation(format!(

@@ -9,9 +9,6 @@ use crate::{
     services::payments::PayoutEventStatus,
 };
 
-pub mod mobile_money_mock;
-pub mod ngn_mock;
-pub mod tando_mock;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -129,10 +126,8 @@ impl PayoutRegistry {
             .map(|(_, a)| a)
     }
 
-    /// The rail used when a quote doesn't name one: real providers before mocks.
+    /// The rail used when a quote doesn't name one.
     pub fn default_for(&self, currency: Currency) -> Option<&Arc<dyn PayoutAdapter>> {
-        let mut adapters: Vec<_> = self.for_currency(currency).collect();
-        adapters.sort_by_key(|a| a.provider().ends_with("-mock"));
-        adapters.into_iter().next()
+        self.for_currency(currency).next()
     }
 }

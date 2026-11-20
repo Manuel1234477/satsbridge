@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// `AWAITING_PAYMENT` waits for the sender's bank transfer; `PAYMENT_DETECTED` means it arrived and
 /// the Stellar settlement is in progress; `SETTLED` means the conversion is final on Stellar.
-/// A payout reversal after success re-opens the payment for refund (NGN addendum A.6), and a
+/// A payout reversal after success re-opens the payment for refund, and a
 /// deposit that arrives after expiry goes straight to refund.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

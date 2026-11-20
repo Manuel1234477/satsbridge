@@ -1,9 +1,9 @@
 [package]
-name = "satsbridge"
+name = "stellarbridge"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-default-run = "satsbridge"
+default-run = "stellarbridge"
 description = "Stellar-settled cross-border payments from Naira to other African currencies"
 license = "MIT"
 
@@ -17,7 +17,6 @@ ed25519-dalek = "2"
 getrandom = "0.3"
 hex = "0.4"
 hmac = "0.12"
-regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }

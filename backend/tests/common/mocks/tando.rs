@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 
-use super::{Institution, InstitutionKind, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient};
-use crate::{
+use stellarbridge::adapters::payout::{Institution, InstitutionKind, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient};
+use stellarbridge::{
     adapters::AdapterError,
     domain::{Currency, Rail, Recipient},
 };

@@ -1,10 +1,10 @@
 //! Offline stand-in for mobile money payouts (XOF, XAF, GNF, GHS), so those corridors can be demoed
-//! without Bitnob. Accepts 8-12 digit numbers; uses the given name or a demo one.
+//! without a real provider. Accepts 8-12 digit numbers; uses the given name or a demo one.
 
 use async_trait::async_trait;
 
-use super::{Institution, InstitutionKind, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient};
-use crate::{
+use stellarbridge::adapters::payout::{Institution, InstitutionKind, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient};
+use stellarbridge::{
     adapters::AdapterError,
     domain::{Currency, Rail, Recipient, currency::currency_for_country, recipient::mask},
 };

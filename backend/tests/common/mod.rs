@@ -1,8 +1,10 @@
 //! Shared harness for the end-to-end tests: the real router over a fresh SQLite file, the
-//! simulated Stellar ledger (priced from fixed test rates, no spread), the mock NGN collection
-//! rail and the mock payout rails. Everything goes through the production paths: deposits arrive
-//! on the signed collections webhook (or the dev simulator, which calls the same handler).
+//! simulated Stellar ledger (priced from fixed test rates, no spread) and test-double collection
+//! and payout rails (see `mocks`). Provider events (deposits, payout and refund results) go
+//! through the same service handlers the signed webhooks call.
 #![allow(dead_code)]
+
+pub mod mocks;
 
 use std::sync::Arc;
 
@@ -12,24 +14,32 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use satsbridge::{
+use serde_json::{Value, json};
+use stellarbridge::{
     AppState, Config,
     adapters::{
-        collection::{CollectionRegistry, mock::MockNgnCollection},
+        collection::CollectionRegistry,
         fx::StaticFxProvider,
-        payout::{
-            PayoutRegistry, mobile_money_mock::MockMobileMoneyAdapter, ngn_mock::MockNgnAdapter,
-            tando_mock::MockTandoAdapter,
-        },
+        payout::PayoutRegistry,
         stellar::simulated::SimulatedLedger,
     },
-    config::{CollectionConfig, FxConfig, PayoutConfig, RateLimitConfig, RecoveryConfig, StellarConfig, parse_rates},
+    config::{CollectionConfig, FxConfig, RateLimitConfig, RecoveryConfig, StellarConfig, parse_rates},
+    db,
     domain::Currency,
     router,
     security::{SIGNATURE_HEADER, sign},
+    services::{
+        new_id,
+        payments::{self, DepositEvent, PayoutEvent, PayoutEventStatus},
+    },
     state::connect,
 };
-use serde_json::{Value, json};
+use mocks::{
+    collection::{MockCollection, demo_sender},
+    mobile_money::MockMobileMoneyAdapter,
+    ngn::MockNgnAdapter,
+    tando::MockTandoAdapter,
+};
 use tower::ServiceExt;
 
 pub const PROVIDER_SECRET: &str = "test-provider-secret";
@@ -45,7 +55,7 @@ pub const PAYOUT_KES_CENTS: i64 = 1_280_565;
 pub const DELIVERED_KES_STROOPS: i64 = 128_700_000_000;
 
 pub fn test_config(quote_ttl_secs: i64) -> Config {
-    let db_path = std::env::temp_dir().join(format!("satsbridge-test-{}.db", uuid::Uuid::new_v4()));
+    let db_path = std::env::temp_dir().join(format!("stellarbridge-test-{}.db", uuid::Uuid::new_v4()));
     let mut stellar = StellarConfig::simulated();
     stellar.simulated_spread_bps = 0;
     Config {
@@ -69,12 +79,8 @@ pub fn test_config(quote_ttl_secs: i64) -> Config {
         fx: FxConfig::static_only(parse_rates(TEST_RATES).unwrap()),
         stellar,
         collections: CollectionConfig {
-            mock_collections: true,
-            ngn_max_deposit_minor: 500_000_000,
             deposit_expiry_secs: 1_800,
         },
-        payouts: PayoutConfig::mock(50_000_000),
-        dev_routes: true,
     }
 }
 
@@ -95,7 +101,7 @@ pub async fn app_with(quote_ttl_secs: i64) -> TestApp {
 /// `customize` may change config and add or replace payout rails.
 pub async fn build(quote_ttl_secs: i64, customize: impl FnOnce(&mut Config, &mut PayoutRegistry)) -> TestApp {
     let mut config = test_config(quote_ttl_secs);
-    let ngn = Arc::new(MockNgnAdapter::new(config.payouts.ngn_max_payout_minor));
+    let ngn = Arc::new(MockNgnAdapter::new(50_000_000));
     let mut payouts = PayoutRegistry::default();
     payouts.register(Arc::new(MockTandoAdapter));
     payouts.register(ngn.clone());
@@ -111,9 +117,9 @@ pub async fn build(quote_ttl_secs: i64, customize: impl FnOnce(&mut Config, &mut
         config.stellar.tx_timeout_secs,
     ));
     let mut collections = CollectionRegistry::default();
-    collections.register(Arc::new(MockNgnCollection::new(
-        config.collections.ngn_max_deposit_minor,
-    )));
+    for rail in MockCollection::all(500_000_000) {
+        collections.register(Arc::new(rail));
+    }
     let state = AppState::assemble(config, pool, fx, ledger.clone(), collections, payouts);
     let mut app = TestApp {
         router: router(state.clone()),
@@ -222,42 +228,62 @@ impl TestApp {
         deposit
     }
 
-    /// The sender's bank transfer, via the mock collection rail's dev simulator.
-    /// `body` may set `amount_minor` and `sender` (null for an unknown source account).
+    /// The sender's payment arriving at the collection rail, as the provider's webhook reports it.
+    /// `body` may set `amount_minor` and `sender`, or `anonymous: true` for an unknown source account.
     pub async fn deposit(&self, payment_id: &str, body: Option<Value>) -> Value {
-        let (status, body) = self
-            .call(
-                Method::POST,
-                &format!("/api/v1/dev/payments/{payment_id}/deposit"),
-                body,
-            )
-            .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        body
+        let deposit = db::get_deposit(&self.state.pool, payment_id)
+            .await
+            .unwrap()
+            .expect("call pay first");
+        let body = body.unwrap_or(Value::Null);
+        let sender = if body["anonymous"].as_bool().unwrap_or(false) {
+            None
+        } else if body["sender"].is_null() {
+            Some(demo_sender(deposit.currency))
+        } else {
+            Some(serde_json::from_value(body["sender"].clone()).unwrap())
+        };
+        let event = DepositEvent {
+            event_id: new_id("testdep"),
+            reference: deposit.reference,
+            amount_minor: body["amount_minor"].as_i64().unwrap_or(deposit.expected_amount),
+            currency: deposit.currency,
+            sender,
+        };
+        let outcome = payments::handle_deposit(&self.state, event).await.unwrap();
+        json!({ "outcome": outcome })
     }
 
     pub async fn status_of(&self, id: &str) -> Value {
         self.call(Method::GET, &format!("/api/v1/payments/{id}"), None).await.1
     }
 
-    /// Mock provider callback for the payout, via the dev route.
+    /// The payout provider's result callback.
     pub async fn mock_payout(&self, id: &str, status: &str) -> (StatusCode, Value) {
-        self.call(
-            Method::POST,
-            &format!("/api/v1/dev/payments/{id}/payout"),
-            Some(json!({ "status": status })),
-        )
-        .await
+        let payout = db::get_payout(&self.state.pool, id).await.unwrap();
+        self.provider_result(payout.and_then(|p| p.provider_reference), status).await
     }
 
-    /// Mock provider callback for the refund, via the dev route.
+    /// The refund provider's result callback.
     pub async fn mock_refund(&self, id: &str, status: &str) -> (StatusCode, Value) {
-        self.call(
-            Method::POST,
-            &format!("/api/v1/dev/payments/{id}/refund"),
-            Some(json!({ "status": status })),
-        )
-        .await
+        let refund = db::get_refund(&self.state.pool, id).await.unwrap();
+        self.provider_result(refund.and_then(|r| r.provider_reference), status).await
+    }
+
+    async fn provider_result(&self, reference: Option<String>, status: &str) -> (StatusCode, Value) {
+        let Some(provider_reference) = reference else {
+            return (StatusCode::CONFLICT, Value::Null);
+        };
+        let event = PayoutEvent {
+            event_id: new_id("testpo"),
+            provider_reference,
+            status: serde_json::from_value::<PayoutEventStatus>(json!(status)).unwrap(),
+            reason: None,
+        };
+        match payments::handle_payout_event(&self.state, event).await {
+            Ok(outcome) => (StatusCode::OK, json!({ "outcome": outcome })),
+            Err(e) => (axum::response::IntoResponse::into_response(e).status(), Value::Null),
+        }
     }
 }
 
