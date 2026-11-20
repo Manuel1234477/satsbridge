@@ -14,9 +14,6 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env()?;
     let bind_addr = config.bind_addr;
-    if config.dev_routes {
-        tracing::warn!("DEV_ROUTES enabled: the mock deposit/payout simulators are mounted. Do not use in production.");
-    }
     if config.admin_api_key.is_none() {
         tracing::info!("ADMIN_API_KEY not set: admin routes are disabled");
     }

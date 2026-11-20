@@ -174,38 +174,8 @@ impl StellarConfig {
 
 #[derive(Clone, Copy)]
 pub struct CollectionConfig {
-    /// Register the mock NGN virtual-account collection rail.
-    pub mock_collections: bool,
-    /// Cap for one NGN deposit, in kobo.
-    pub ngn_max_deposit_minor: i64,
-    /// How long the sender has to make the bank transfer.
+    /// How long the sender has to make their payment.
     pub deposit_expiry_secs: i64,
-}
-
-#[derive(Clone)]
-pub struct PayoutConfig {
-    /// Register mock rails (NGN bank, Tando KES, mobile money) wherever no real provider covers
-    /// that currency and rail. The NGN bank rail also carries refunds to senders.
-    pub mock_payouts: bool,
-    /// Cap for the mock NGN rail, in kobo.
-    pub ngn_max_payout_minor: i64,
-}
-
-impl PayoutConfig {
-    pub fn from_env() -> anyhow::Result<Self> {
-        Ok(Self {
-            mock_payouts: parse_or("MOCK_PAYOUTS", true)?,
-            ngn_max_payout_minor: parse_or("NGN_MAX_PAYOUT_MINOR", 50_000_000)?,
-        })
-    }
-
-    /// Mock rails only; for tests and offline demos.
-    pub fn mock(ngn_max_payout_minor: i64) -> Self {
-        Self {
-            mock_payouts: true,
-            ngn_max_payout_minor,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -267,8 +237,6 @@ pub struct Config {
     pub fx: FxConfig,
     pub stellar: StellarConfig,
     pub collections: CollectionConfig,
-    pub payouts: PayoutConfig,
-    pub dev_routes: bool,
 }
 
 impl Config {
@@ -277,7 +245,6 @@ impl Config {
             .ok()
             .map(|u| u.trim().trim_end_matches('/').to_string())
             .filter(|u| !u.is_empty());
-        let payouts = PayoutConfig::from_env()?;
         let config = Self {
             bind_addr: parse_or("BIND_ADDR", "0.0.0.0:8080".parse()?)?,
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://stellarbridge.db".into()),
@@ -309,13 +276,9 @@ impl Config {
             fx: FxConfig::from_env()?,
             stellar: StellarConfig::from_env()?,
             collections: CollectionConfig {
-                mock_collections: parse_or("MOCK_COLLECTIONS", true)?,
-                ngn_max_deposit_minor: parse_or("NGN_MAX_DEPOSIT_MINOR", 500_000_000)?,
                 deposit_expiry_secs: parse_or("DEPOSIT_EXPIRY_SECS", 1_800)?,
             },
-            payouts,
             public_base_url,
-            dev_routes: parse_or("DEV_ROUTES", false)?,
         };
         if !(0..10_000).contains(&config.fee_bps) {
             bail!("FEE_BPS must be between 0 and 9999");

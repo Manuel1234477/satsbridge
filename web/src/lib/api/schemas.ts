@@ -104,10 +104,16 @@ export const PaymentIntentSchema = z.object({
 });
 export type PaymentIntent = z.infer<typeof PaymentIntentSchema>;
 
-// Bank transfer instructions for the sender (POST /payments/{id}/pay) and their status.
+// Payment instructions for the sender (POST /payments/{id}/pay) and their status.
+export const DepositMethodSchema = z.enum(['bank_transfer', 'mobile_money']);
+export type DepositMethod = z.infer<typeof DepositMethodSchema>;
+
 export const DepositSchema = z.object({
   payment_intent_id: z.string(),
   provider: z.string(),
+  // bank_transfer: account_number at bank_name. mobile_money: pay the merchant/Paybill number
+  // account_number on bank_name (the network), quoting reference.
+  method: DepositMethodSchema,
   currency: CurrencySchema,
   expected_amount: z.number().int(),
   reference: z.string(),
@@ -238,10 +244,6 @@ export const RecipientResolutionSchema = z.object({
   expires_at: z.string(),
 });
 export type RecipientResolution = z.infer<typeof RecipientResolutionSchema>;
-
-export const DevPayoutOutcomeSchema = z.object({
-  outcome: z.string(),
-});
 
 export const ErrorResponseSchema = z.object({
   error: z.object({

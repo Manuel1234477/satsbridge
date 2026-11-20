@@ -2,21 +2,21 @@
 
 **As of:** 2026-11-20
 **Scope:** backend (`backend/`) and web app (`web/`) .
-**Build:** compiles with no warnings, clippy clean. 52 backend tests pass (29 unit, 23 end-to-end), plus 1 opt-in live test. The web app has 37 Vitest tests and 3 Playwright browser tests.
+**Build:** compiles with no warnings, clippy clean. 55 backend tests pass (30 unit, 25 end-to-end), plus 1 opt-in live test. The web app has 38 Vitest tests. 
 **Related docs:** [backend README](../backend/README.md) (setup, API, demo) · [web README](../web/README.md) · [demo script](demo-script.md)
 
 ---
 
 ## 1. Summary
 
-A sender in Nigeria pays naira by bank transfer. The payment settles on **Stellar testnet** as one atomic transaction: the deposit is minted as an `NGN` token and path-paid into the destination token (`KES`, `GHS`, `XOF`, `XAF`, `GNF`) over the Stellar DEX. Its `destMin` is the quoted payout. A local rail then pays the recipient. Afterwards the destination tokens are burned, or, if the payout failed, the conversion is reversed on-chain and the naira refunded.
+A sender pays in any supported currency: naira by bank transfer, or shillings, cedis, CFA francs and Guinean francs by mobile money. The payment settles on **Stellar testnet** as one atomic transaction: the deposit is minted as an `NGN` token and path-paid into the destination token (`KES`, `GHS`, `XOF`, `XAF`, `GNF`) over the Stellar DEX. Its `destMin` is the quoted payout. A local rail then pays the recipient. Afterwards the destination tokens are burned, or, if the payout failed, the conversion is reversed on-chain and the naira refunded.
 
 | Integration | Status | Used for |
 |---|---|---|
 | Stellar testnet (Horizon) | **Live, verified end to end**: accounts, trustlines, DEX offers, quotes from path finding, settle/redeem/reverse transactions, explorer links, through the API and the web UI | Settlement and FX |
 | Coinbase / CoinGecko exchange rates | Live (USD rates) | Pricing the market maker's offers; the simulated ledger |
-| NGN collection (virtual accounts) | **Mock only** | Receiving the sender's naira |
-| Payouts (M-Pesa, mobile money, NGN bank) | **Mock only** | Paying recipients; refunds |
+| Collection (NGN bank, M-Pesa Paybill, mobile money) | **Not built** (interface only) | Receiving the sender's money |
+| Payouts (M-Pesa, mobile money, NGN bank) | **Not built** (interface only) | Paying recipients; refunds |
 
 ## 2. Architecture
 
@@ -24,8 +24,8 @@ A sender in Nigeria pays naira by bank transfer. The payment settles on **Stella
 web (Next.js) ──HTTP──> api (axum)
                           ├─ services: quotes · payments (advance) · ledger · refunds · recovery
                           ├─ adapters/stellar: HorizonLedger (testnet) | SimulatedLedger
-                          ├─ adapters/collection: mock NGN virtual accounts
-                          ├─ adapters/payout: Tando mock, mobile money mock, NGN mock
+                          ├─ adapters/collection: trait + registry (no providers)
+                          ├─ adapters/payout: trait + registry (no providers)
                           └─ SQLite: quotes, payments, deposits, stellar_transactions, payouts, refunds, audit
 ```
 
@@ -66,6 +66,7 @@ Run on 2026-11-20 with fresh accounts from `stellar_setup`:
 - `stellar_live` test: NGN 100,000 quoted into every currency through `NGN → USD → X`.
 - API, NGN → KES: ₦150,000 quoted at 0.0953 KES/NGN (KSh 14,087.32 guaranteed). Settle transaction applied: Horizon shows a 2-operation transaction (mint ₦150,000, path payment ₦148,500 → KSh 14,158.12 via USD). Mock payout success → redeem transaction applied. Status `COMPLETED`.
 - API, NGN → GHS with a failed payout: settle, then reverse applied; refund of ₦50,000 to the source account; `REFUNDED`. Treasury afterwards: every token 0 except ₦1,500 (the completed payment's fee).
+- Web UI, KES → NGN against the testnet backend: M-Pesa Paybill pay-in, settlement, receipt. No console errors.
 - Web UI against the testnet backend: quote with the DEX path, M-Pesa recipient, bank details, simulated transfer, "On Stellar" panel with explorer links, receipt. No console errors; every response passed the Zod schemas.
 
 ## 5. Exactly-once guarantees
@@ -99,19 +100,18 @@ See [`backend/.env.example`](../backend/.env.example). Required on testnet: `STE
 
 | Suite | Count | Covers |
 |---|---|---|
-| Unit (`cargo test --lib`) | 29 | Transaction signing (verifiable signatures, hash, memo), result decoding, amounts and price approximation, DEX quotes, FX parsing and caching, state machine, keys |
-| `payment_flow` | 12 | NGN → KES end to end, failure and reversal with on-chain undo, refunds, DEX slippage, Stellar timeouts and lost transactions, expiry and late deposits, signatures, limits |
+| Unit (`cargo test --lib`) | 30 | Transaction signing (verifiable signatures, hash, memo), result decoding, amounts and price approximation, DEX quotes, FX parsing and caching, state machine, keys |
+| `payment_flow` | 14 | NGN → KES and KES → NGN end to end, senders paying in every currency, failure and reversal with on-chain undo, refunds, DEX slippage, Stellar timeouts and lost transactions, expiry and late deposits, signatures, limits |
 | `platform` | 11 | Auth and privacy, rate limits, payout recovery and review, admin, NGN → XAF/GNF/GHS |
 | `stellar_live` | 1 (ignored) | Live, read-only check against testnet |
-| Web: Vitest | 37 | Mock API contract (every response through the Zod schemas), money, status, errors |
-| Web: Playwright | 3 | Happy path, failure with reversal and refund, provider reversal (mock mode) |
+| Web: Vitest | see `npm test` | Money, status, errors, currency lists |
 
 ## 9. Known gaps and next steps
 
-1. **Real NGN collection.** A virtual-account provider (Paystack, Flutterwave, Monnify) or an NGN anchor (SEP-24) behind `CollectionAdapter`.
+1. **Real collection.** Providers for each pay-in rail (NGN virtual accounts, M-Pesa C2B, mobile money aggregators) or SEP-24 anchors behind `CollectionAdapter`.
 2. **Backed assets.** The tokens are test assets. Production needs licensed anchors (or reserves 1:1 with our local accounts) and SEP-31 for the receiving side.
 3. **Throughput.** One treasury sequence number serializes settlements; channel accounts would lift this.
 4. **Live market making.** Offers are re-priced only when `stellar_setup` runs. A daemon (or AMM pools) should follow the FX feed.
 5. **Deadline for settlement.** If the DEX has no path for a long time, a received deposit waits in `PAYMENT_DETECTED` (retried by recovery) rather than being refunded.
 6. **Overpayments** are flagged but the excess is not refunded automatically.
-7. **Real payout providers.** M-Pesa, mobile money and NGN bank payouts are mocks.
+7. **Real payout providers.** M-Pesa, mobile money and NGN bank payouts are not built.

@@ -134,7 +134,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <Sheet open={sandboxOpen} onClose={() => setSandboxOpen(false)} title="Sandbox">
           <p>{SANDBOX_TEXT}</p>
-          <p className="label">Rates, invoices and payouts come from the backend or, in mock mode, from an in-browser stand-in.</p>
+          <p className="label">Rates, invoices and payouts come from the backend.</p>
         </Sheet>
         <Sheet open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings">
           <div className="flex flex-col gap-5">

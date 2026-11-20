@@ -10,13 +10,13 @@ use serde_json::{Value, json};
 
 use crate::{
     db::{PaymentIntent, Refund},
-    domain::PaymentStatus,
+    domain::{PaymentStatus, Recipient},
     error::{AppError, AppResult},
     services::{
         admin::{self, AdminPayment, Summary},
         payments::{self, PaymentDetails},
         recovery::{self, RecoveryReport},
-        refunds::{self, RefundDestination},
+        refunds,
     },
     state::AppState,
 };
@@ -90,7 +90,7 @@ async fn fail_payout(
 async fn refund(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    body: Option<Json<RefundDestination>>,
+    body: Option<Json<Recipient>>,
 ) -> AppResult<Json<Refund>> {
     let payment = admin::get(&state, &id).await?;
     let refund = match body {

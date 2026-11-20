@@ -127,8 +127,8 @@ export function LiveRatePanel({ quote, sourceExponent, destinationExponent, stal
             </li>
             <li>
               <Landmark className="h-5 w-5" aria-hidden="true" />
-              <span className="font-semibold text-[var(--text)]">2. Bank transfer</span>
-              Pay in naira to your own account number.
+              <span className="font-semibold text-[var(--text)]">2. Pay in</span>
+              By bank transfer or mobile money, in your currency.
             </li>
             <li>
               <CheckCircle2 className="h-5 w-5" aria-hidden="true" />

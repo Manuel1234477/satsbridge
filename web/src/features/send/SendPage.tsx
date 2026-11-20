@@ -292,9 +292,9 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
       />
       <Sheet open={sheet === 'help'} onClose={() => setSheet(null)} title="How this works">
         <p className="label">
-          Enter an amount in naira and check the live rate. Confirm the recipient, then make one bank transfer to the account number we give you. We settle
-          the conversion on the Stellar network and pay the recipient in their own currency, by mobile money or bank. If anything fails, your naira comes
-          back to the account you paid from.
+          Choose the currency you pay in and the one they receive, enter an amount and check the live rate. Confirm the recipient, then pay once, by
+          bank transfer (naira) or mobile money (shillings, cedis, CFA francs, Guinean francs). We settle the conversion on the Stellar network and pay the
+          recipient in their own currency. If anything fails, your money goes back to the account you paid from.
         </p>
         <p className="label">Sandbox: no real money is moved.</p>
       </Sheet>

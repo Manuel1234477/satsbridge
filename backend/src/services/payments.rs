@@ -24,7 +24,7 @@ use super::{ledger, new_id, recipients, refunds};
 use crate::{
     adapters::{
         AdapterError,
-        collection::{DepositRequest, SenderAccount},
+        collection::DepositRequest,
         payout::{PayoutAccepted, PayoutAdapter, PayoutRequest},
         stellar::{LedgerOp, pricing::minor_to_stroops},
     },
@@ -83,9 +83,11 @@ pub struct DepositEvent {
     pub reference: String,
     pub amount_minor: i64,
     pub currency: crate::domain::Currency,
-    /// The account the money came from, if the provider reports it. Refunds go back here.
+    /// The account the money came from, if the provider reports it, as a payout destination in
+    /// the deposit's currency (e.g. `{"rail":"KE_MOBILE_MONEY","phone_number":"0722000111"}`).
+    /// Refunds go back here.
     #[serde(default)]
-    pub sender: Option<SenderAccount>,
+    pub sender: Option<Recipient>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -233,7 +235,7 @@ pub async fn get_details(state: &AppState, payment: PaymentIntent) -> AppResult<
     })
 }
 
-/// Returns the bank transfer instructions for a payment, creating them on first call.
+/// Returns the deposit instructions (bank transfer or mobile money) for a payment, creating them on first call.
 /// Safe to call repeatedly.
 pub async fn pay(state: &AppState, payment: &PaymentIntent) -> AppResult<Deposit> {
     let id = payment.id.as_str();
@@ -278,6 +280,7 @@ pub async fn pay(state: &AppState, payment: &PaymentIntent) -> AppResult<Deposit
     let deposit = Deposit {
         payment_intent_id: payment.id.clone(),
         provider: collection.provider().to_string(),
+        method: instructions.method,
         currency: payment.source_currency,
         expected_amount: payment.source_amount,
         reference: instructions.reference,

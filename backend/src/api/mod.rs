@@ -20,7 +20,6 @@ use crate::{
 
 mod admin;
 mod currencies;
-mod dev;
 mod payments;
 mod quotes;
 mod recipients;
@@ -41,11 +40,6 @@ pub fn router(state: AppState) -> Router {
         .route("/payments/{id}/refund", post(payments::refund))
         .route("/transactions", get(payments::list))
         .route("/recipients/resolve", post(recipients::resolve));
-    let user = if state.config.dev_routes {
-        user.merge(dev::routes())
-    } else {
-        user
-    };
     let user = user.route_layer(middleware::from_fn_with_state(state.clone(), require_user));
 
     let signup = Router::new()
@@ -83,7 +77,7 @@ fn cors_layer(state: &AppState) -> Option<CorsLayer> {
         .filter_map(|o| HeaderValue::from_str(o).ok())
         .collect();
     if origins.is_empty() {
-        return state.config.dev_routes.then(CorsLayer::permissive);
+        return None;
     }
     Some(
         CorsLayer::new()

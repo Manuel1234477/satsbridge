@@ -2,7 +2,6 @@ import { apiRequest } from './client';
 import {
   CurrencyInfoSchema,
   DepositSchema,
-  DevPayoutOutcomeSchema,
   PaymentDetailsSchema,
   PaymentIntentSchema,
   PayoutInstitutionSchema,
@@ -87,7 +86,7 @@ export function createPayment(input: { quote_id: string; recipient: Recipient })
   });
 }
 
-// Bank transfer instructions for the payment; created on the first call, the same afterwards.
+// Payment instructions (bank transfer or mobile money); created on the first call, the same afterwards.
 export function payPayment(id: string): Promise<Deposit> {
   return apiRequest({
     method: 'POST',
@@ -107,15 +106,10 @@ export function getPayment(id: string): Promise<PaymentDetails> {
   });
 }
 
-export interface RefundDestination {
-  bank_code: string;
-  account_number: string;
-  resolution_id: string;
-}
-
-// Refund to a verified NGN bank account (the account the transfer came from is used automatically
-// when the bank reports it).
-export function refundPayment(id: string, destination: RefundDestination): Promise<Refund> {
+// Refund to an account in the source currency, shaped like a payment recipient (an NGN bank account
+// needs a resolution_id). The account the money came from is used automatically when the provider
+// reports it.
+export function refundPayment(id: string, destination: Recipient): Promise<Refund> {
   return apiRequest({
     method: 'POST',
     path: `/payments/${encodeURIComponent(id)}/refund`,
@@ -131,37 +125,6 @@ export function getTransactions(limit = 50): Promise<PaymentIntent[]> {
     path: `/transactions?limit=${limit}`,
     auth: true,
     schema: PaymentIntentSchema.array(),
-  });
-}
-
-export function simulatePayout(id: string, status: 'success' | 'failed' | 'reversed'): Promise<{ outcome: string }> {
-  return apiRequest({
-    method: 'POST',
-    path: `/dev/payments/${encodeURIComponent(id)}/payout`,
-    body: { status },
-    auth: true,
-    schema: DevPayoutOutcomeSchema,
-  });
-}
-
-// Dev only (mock collection rail): the sender's bank transfer arrives.
-export function simulateDeposit(id: string): Promise<{ outcome: string }> {
-  return apiRequest({
-    method: 'POST',
-    path: `/dev/payments/${encodeURIComponent(id)}/deposit`,
-    body: {},
-    auth: true,
-    schema: DevPayoutOutcomeSchema,
-  });
-}
-
-export function simulateRefund(id: string, status: 'success' | 'failed'): Promise<{ outcome: string }> {
-  return apiRequest({
-    method: 'POST',
-    path: `/dev/payments/${encodeURIComponent(id)}/refund`,
-    body: { status },
-    auth: true,
-    schema: DevPayoutOutcomeSchema,
   });
 }
 

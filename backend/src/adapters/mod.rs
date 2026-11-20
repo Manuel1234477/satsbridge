@@ -1,4 +1,4 @@
-//! Integrations behind traits so real providers can replace the demo mocks.
+//! Integrations behind traits for real providers.
 
 pub mod collection;
 pub mod fx;

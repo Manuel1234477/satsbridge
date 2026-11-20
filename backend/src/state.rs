@@ -7,20 +7,17 @@ use sqlx::{
 
 use crate::{
     adapters::{
-        collection::{CollectionRegistry, mock::MockNgnCollection},
+        collection::CollectionRegistry,
         fx::{CachedFx, CoinGeckoSource, CoinbaseSource, FallbackFx, FxProvider, StaticFxProvider},
-        payout::{
-            PayoutRegistry, mobile_money_mock::MockMobileMoneyAdapter, ngn_mock::MockNgnAdapter,
-            tando_mock::MockTandoAdapter,
-        },
+        payout::PayoutRegistry,
         stellar::{
             StellarLedger,
             horizon::{HorizonConfig, HorizonLedger},
             simulated::SimulatedLedger,
         },
     },
-    config::{CollectionConfig, Config, FxConfig, FxProviderKind, LedgerKind, PayoutConfig, StellarConfig},
-    domain::{Currency, Rail},
+    config::{CollectionConfig, Config, FxConfig, FxProviderKind, LedgerKind, StellarConfig},
+    
     ratelimit::RateLimits,
 };
 
@@ -64,7 +61,7 @@ impl AppState {
         let fx = build_fx(&config.fx)?;
         let ledger = build_ledger(&config.stellar, fx.clone()).await?;
         let collections = build_collections(&config.collections);
-        let payouts = build_payouts(&config.payouts).await?;
+        let payouts = build_payouts().await?;
         Ok(Self::assemble(config, pool, fx, ledger, collections, payouts))
     }
 }
@@ -156,27 +153,13 @@ pub async fn build_ledger(cfg: &StellarConfig, fx: Arc<dyn FxProvider>) -> anyho
     }
 }
 
-pub fn build_collections(cfg: &CollectionConfig) -> CollectionRegistry {
-    let mut collections = CollectionRegistry::default();
-    if cfg.mock_collections {
-        collections.register(Arc::new(MockNgnCollection::new(cfg.ngn_max_deposit_minor)));
-    }
-    collections
+/// Collection rails (how senders pay in). Real providers register here; none are wired yet, so
+/// no currency is sendable until one is.
+pub fn build_collections(_cfg: &CollectionConfig) -> CollectionRegistry {
+    CollectionRegistry::default()
 }
 
-/// Builds the payout rails: mocks for every currency until real providers are added.
-pub async fn build_payouts(cfg: &PayoutConfig) -> anyhow::Result<PayoutRegistry> {
-    let mut payouts = PayoutRegistry::default();
-    if cfg.mock_payouts {
-        if payouts.get(Currency::Ngn, Rail::NgBankTransfer).is_none() {
-            payouts.register(Arc::new(MockNgnAdapter::new(cfg.ngn_max_payout_minor)));
-        }
-        payouts.register(Arc::new(MockTandoAdapter));
-        for currency in [Currency::Xof, Currency::Xaf, Currency::Gnf, Currency::Ghs] {
-            if payouts.get(currency, Rail::MobileMoney).is_none() {
-                payouts.register(Arc::new(MockMobileMoneyAdapter::new(currency)));
-            }
-        }
-    }
-    Ok(payouts)
+/// Payout rails. Real providers register here; none are wired yet.
+pub async fn build_payouts() -> anyhow::Result<PayoutRegistry> {
+    Ok(PayoutRegistry::default())
 }
