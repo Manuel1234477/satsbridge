@@ -8,8 +8,6 @@ pub enum Rail {
     KeMobileMoney,
     /// Nigerian NIP interbank transfer to a NUBAN (banks and fintech wallets).
     NgBankTransfer,
-    /// LNURL-pay Lightning Address whose owner off-ramps to local currency (e.g. Tapnob).
-    LightningAddress,
     /// Mobile money wallet in a given country (M-Pesa, Orange Money, MTN MoMo, Wave, ...).
     MobileMoney,
 }
@@ -19,7 +17,6 @@ impl Rail {
         match self {
             Rail::KeMobileMoney => "KE_MOBILE_MONEY",
             Rail::NgBankTransfer => "NG_BANK_TRANSFER",
-            Rail::LightningAddress => "LIGHTNING_ADDRESS",
             Rail::MobileMoney => "MOBILE_MONEY",
         }
     }
@@ -40,10 +37,6 @@ pub enum Recipient {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolution_id: Option<String>,
     },
-    LightningAddress {
-        /// `name@domain`, e.g. `ada@tapnob.io`.
-        address: String,
-    },
     MobileMoney {
         /// ISO 3166 alpha-2, e.g. `SN`.
         country: String,
@@ -61,7 +54,6 @@ impl Recipient {
         match self {
             Recipient::KeMobileMoney { .. } => Rail::KeMobileMoney,
             Recipient::NgBankTransfer { .. } => Rail::NgBankTransfer,
-            Recipient::LightningAddress { .. } => Rail::LightningAddress,
             Recipient::MobileMoney { .. } => Rail::MobileMoney,
         }
     }
@@ -76,7 +68,6 @@ impl Recipient {
             } => {
                 format!("{bank_code}:{}", mask(account_number))
             }
-            Recipient::LightningAddress { address } => address.trim().to_ascii_lowercase(),
             Recipient::MobileMoney {
                 country,
                 provider_code,

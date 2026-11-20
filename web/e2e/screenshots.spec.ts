@@ -17,22 +17,18 @@ for (const vp of VIEWPORTS) {
     await page.addInitScript(() => localStorage.setItem('satsbridge.theme', 'dark'));
 
     await page.goto('/');
-    await page.getByLabel('Amount you send').fill('10000');
+    await page.getByLabel('Amount you send').fill('150000');
     await expect(page.getByLabel('Amount they receive')).not.toHaveValue('', { timeout: 15_000 });
     await expect(page.getByText(/expires in \d+s/)).toBeVisible();
     await page.screenshot({ path: `${OUT}/${vp.name}-1-send.png`, fullPage: false });
 
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.getByRole('button', { name: 'Choose bank' }).click();
-    await page.getByRole('option', { name: 'GTBank' }).click();
-    await page.getByLabel('Account number (10 digits)').fill('0123456789');
-    await page.getByRole('button', { name: 'Check account' }).click();
-    await expect(page.getByRole('heading', { name: 'Confirm account holder' })).toBeVisible();
+    await page.getByLabel('M-Pesa phone number').fill('0712345678');
     await page.screenshot({ path: `${OUT}/${vp.name}-2-recipient.png`, fullPage: false });
 
-    await page.getByRole('button', { name: 'Yes, this is correct' }).click();
+    await page.getByRole('button', { name: 'Use this number' }).click();
     await page.getByRole('button', { name: 'Confirm and continue' }).click();
-    await expect(page.getByRole('link', { name: 'Open in wallet' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Send a bank transfer to')).toBeVisible({ timeout: 15_000 });
     await page.screenshot({ path: `${OUT}/${vp.name}-3-pay.png`, fullPage: false });
 
     await expect(page.getByRole('status').filter({ hasText: 'Money delivered' })).toBeVisible({ timeout: 60_000 });

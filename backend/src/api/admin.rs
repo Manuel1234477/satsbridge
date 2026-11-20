@@ -9,14 +9,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    db::PaymentIntent,
+    db::{PaymentIntent, Refund},
     domain::PaymentStatus,
-    error::AppResult,
+    error::{AppError, AppResult},
     services::{
         admin::{self, AdminPayment, Summary},
         payments::{self, PaymentDetails},
         recovery::{self, RecoveryReport},
-        refunds,
+        refunds::{self, RefundDestination},
     },
     state::AppState,
 };
@@ -87,20 +87,19 @@ async fn fail_payout(
     Ok(Json(admin::get(&state, &id).await?))
 }
 
-#[derive(Deserialize)]
-struct RefundRequest {
-    payment_request: String,
-}
-
 async fn refund(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(req): Json<RefundRequest>,
-) -> AppResult<Json<PaymentIntent>> {
+    body: Option<Json<RefundDestination>>,
+) -> AppResult<Json<Refund>> {
     let payment = admin::get(&state, &id).await?;
-    Ok(Json(
-        refunds::refund(&state, &payment, &req.payment_request, "admin").await?,
-    ))
+    let refund = match body {
+        Some(Json(destination)) => refunds::start_to(&state, &payment, destination, "admin").await?,
+        None => refunds::start_automatic(&state, &payment)
+            .await?
+            .ok_or_else(|| AppError::Validation("the deposit's source account is unknown; give one".into()))?,
+    };
+    Ok(Json(refund))
 }
 
 async fn run_recovery(State(state): State<AppState>) -> AppResult<Json<RecoveryReport>> {

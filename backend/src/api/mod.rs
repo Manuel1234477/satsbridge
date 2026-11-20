@@ -21,7 +21,6 @@ use crate::{
 mod admin;
 mod currencies;
 mod dev;
-mod lnurl;
 mod payments;
 mod quotes;
 mod recipients;
@@ -62,17 +61,10 @@ pub fn router(state: AppState) -> Router {
     // Signed or verified by their own mechanism; not rate limited so provider retries get through.
     let webhooks = Router::new()
         .route("/webhooks/provider", post(webhooks::provider))
-        .route("/webhooks/bitnob", post(webhooks::bitnob))
-        .route("/webhooks/lnbits", post(webhooks::lnbits));
+        .route("/webhooks/collections", post(webhooks::collections))
+        .route("/webhooks/bitnob", post(webhooks::bitnob));
 
-    // Called by senders' wallets, from any origin (LUD-01).
-    let lnurl = Router::new()
-        .route("/lnurlp/{id}", get(lnurl::pay_request))
-        .route("/lnurlp/{id}/callback", get(lnurl::callback))
-        .route_layer(middleware::from_fn_with_state(state.clone(), limit_by_ip))
-        .layer(CorsLayer::permissive());
-
-    let mut api = user.merge(signup).merge(public).merge(webhooks).merge(lnurl);
+    let mut api = user.merge(signup).merge(public).merge(webhooks);
     if state.config.admin_api_key.is_some() {
         api = api.merge(admin::routes().route_layer(middleware::from_fn_with_state(state.clone(), require_admin)));
     }
@@ -107,8 +99,9 @@ async fn health(State(state): State<AppState>) -> AppResult<Json<Value>> {
     Ok(Json(json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
-        "lightning": state.lightning.name(),
-        "lnurl": state.config.public_base_url.is_some(),
+        "ledger": state.ledger.name(),
+        "network": state.ledger.network_passphrase(),
+        "treasury": state.ledger.treasury(),
     })))
 }
 

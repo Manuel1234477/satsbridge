@@ -13,21 +13,18 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     let bind_addr = config.bind_addr;
     if config.dev_routes {
-        tracing::warn!("DEV_ROUTES enabled: the mock payout simulator is mounted. Do not use in production.");
+        tracing::warn!("DEV_ROUTES enabled: the mock deposit/payout simulators are mounted. Do not use in production.");
     }
     if config.admin_api_key.is_none() {
         tracing::info!("ADMIN_API_KEY not set: admin routes are disabled");
     }
 
     let state = AppState::from_config(config).await?;
-    if state.config.lightning.poll_secs > 0 {
-        services::settlement::spawn_watcher(state.clone(), Duration::from_secs(state.config.lightning.poll_secs));
-    }
     if state.config.recovery.poll_secs > 0 {
         services::recovery::spawn_worker(state.clone(), Duration::from_secs(state.config.recovery.poll_secs));
     }
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    tracing::info!(%bind_addr, "SatsBridge API listening");
+    tracing::info!(%bind_addr, ledger = state.ledger.name(), "SatsBridge API listening");
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),

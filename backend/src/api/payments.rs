@@ -7,11 +7,11 @@ use serde::Deserialize;
 
 use super::CurrentUser;
 use crate::{
-    db::{self, PaymentIntent},
-    error::AppResult,
+    db::{self, Deposit, PaymentIntent, Refund},
+    error::{AppError, AppResult},
     services::{
-        payments::{self, CreatePaymentRequest, PayResponse, PaymentDetails},
-        refunds,
+        payments::{self, CreatePaymentRequest, PaymentDetails},
+        refunds::{self, RefundDestination},
     },
     state::AppState,
 };
@@ -40,27 +40,28 @@ pub async fn pay(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
-) -> AppResult<Json<PayResponse>> {
+) -> AppResult<Json<Deposit>> {
     let payment = payments::owned_payment(&state, &id, &user.0).await?;
     Ok(Json(payments::pay(&state, &payment).await?))
 }
 
-#[derive(Deserialize)]
-pub struct RefundRequest {
-    /// BOLT11 invoice for exactly the sats the sender paid.
-    pub payment_request: String,
-}
-
+/// Refund to the account the deposit came from (empty body), or to the given NGN account.
 pub async fn refund(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
-    Json(req): Json<RefundRequest>,
-) -> AppResult<Json<PaymentIntent>> {
+    body: Option<Json<RefundDestination>>,
+) -> AppResult<Json<Refund>> {
     let payment = payments::owned_payment(&state, &id, &user.0).await?;
-    Ok(Json(
-        refunds::refund(&state, &payment, &req.payment_request, &format!("user {}", user.0)).await?,
-    ))
+    let refund = match body {
+        Some(Json(destination)) => {
+            refunds::start_to(&state, &payment, destination, &format!("user {}", user.0)).await?
+        }
+        None => refunds::start_automatic(&state, &payment).await?.ok_or_else(|| {
+            AppError::Validation("the account this payment came from is unknown; give a bank account".into())
+        })?,
+    };
+    Ok(Json(refund))
 }
 
 #[derive(Deserialize)]

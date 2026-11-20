@@ -1,23 +1,33 @@
+//! Quotes priced from the Stellar DEX.
+//!
+//! The fee is taken in the source currency; the rest (`send_amount`) is converted on Stellar with
+//! a strict-send path payment. The quoted payout is the DEX's current output minus a slippage
+//! buffer (`SLIPPAGE_BPS`), and becomes the path payment's `destMin`: the recipient gets at
+//! least that, or the settlement fails as a whole and the sender is refunded.
+
 use chrono::{Duration, Utc};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use serde::Deserialize;
+use sqlx::types::Json;
 
 use super::new_id;
 use crate::{
-    db::{self, AmountSide, Quote},
-    domain::{
-        Currency, Rail,
-        money::{SATS_PER_BTC, major_to_minor_ceil, major_to_minor_floor, minor_to_major},
+    adapters::stellar::{
+        PathQuote, StellarLedger,
+        pricing::{minor_to_stroops, stroops_to_minor_ceil, stroops_to_minor_floor},
     },
+    db::{self, AmountSide, Quote},
+    domain::{Currency, Rail},
     error::{AppError, AppResult},
     state::AppState,
 };
 
-/// Upper bound on any input amount in minor units, to keep decimal math far from overflow.
-const MAX_AMOUNT_MINOR: i64 = 1_000_000_000_000_000;
+/// Upper bound on any input amount in minor units, to keep stroop math far from overflow.
+const MAX_AMOUNT_MINOR: i64 = 100_000_000_000_000;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateQuoteRequest {
+    #[serde(default = "default_source")]
     pub source_currency: Currency,
     pub destination_currency: Currency,
     /// Minor units of the currency selected by `amount_side`.
@@ -29,23 +39,24 @@ pub struct CreateQuoteRequest {
     pub rail: Option<Rail>,
 }
 
+fn default_source() -> Currency {
+    Currency::Ngn
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct QuoteAmounts {
     pub source_amount: i64,
-    pub destination_amount: i64,
-    /// Invoice amount the sender pays.
-    pub gross_sats: i64,
-    pub fee_sats: i64,
     pub fee_source_amount: i64,
+    pub send_amount: i64,
+    pub destination_amount: i64,
     pub exchange_rate: Decimal,
+    pub hops: Vec<String>,
 }
 
-pub struct Pricing {
-    /// Source-currency major units per 1 BTC.
-    pub source_btc_price: Decimal,
-    pub destination_btc_price: Decimal,
+pub struct Fees {
     pub fee_bps: i64,
-    pub flat_fee_sats: i64,
+    pub flat_fee_minor: i64,
+    pub slippage_bps: i64,
 }
 
 fn too_small() -> AppError {
@@ -56,69 +67,75 @@ fn overflow() -> AppError {
     AppError::Validation("amount is too large".into())
 }
 
-/// source amount -> BTC (sats) -> minus fee -> destination amount. Fees are taken in sats.
-/// Rounding always favours the platform by at most one minor unit / one sat.
-pub fn compute(
+fn bps_of(amount: i64, bps: i64) -> Option<i64> {
+    (Decimal::from(amount) * Decimal::from(bps) / Decimal::from(10_000))
+        .ceil()
+        .to_i64()
+}
+
+/// Rounding always favours the platform by at most one minor unit.
+pub async fn compute(
+    ledger: &dyn StellarLedger,
     source: Currency,
     destination: Currency,
     amount: i64,
     side: AmountSide,
-    p: &Pricing,
+    fees: &Fees,
 ) -> AppResult<QuoteAmounts> {
-    let sats_per_btc = Decimal::from(SATS_PER_BTC);
-    let bps = Decimal::from(p.fee_bps);
-    let ten_k = Decimal::from(10_000);
-
-    let (source_amount, destination_amount, gross_sats, fee_sats) = match side {
+    let keep = Decimal::from(10_000 - fees.slippage_bps) / Decimal::from(10_000);
+    let (source_amount, fee, send, destination_amount, path): (i64, i64, i64, i64, PathQuote) = match side {
         AmountSide::Source => {
-            let source_major = minor_to_major(amount, source);
-            let gross = (source_major * sats_per_btc / p.source_btc_price)
+            let fee = bps_of(amount, fees.fee_bps).ok_or_else(overflow)? + fees.flat_fee_minor;
+            let send = amount - fee;
+            if send <= 0 {
+                return Err(too_small());
+            }
+            let path = ledger
+                .quote_send(
+                    source,
+                    minor_to_stroops(send, source).ok_or_else(overflow)?,
+                    destination,
+                )
+                .await?;
+            let buffered = (Decimal::from(path.destination_amount) * keep)
                 .floor()
                 .to_i64()
                 .ok_or_else(overflow)?;
-            let fee = (Decimal::from(gross) * bps / ten_k)
-                .ceil()
-                .to_i64()
-                .ok_or_else(overflow)?
-                + p.flat_fee_sats;
-            let net = gross - fee;
-            if net <= 0 {
-                return Err(too_small());
-            }
-            let destination_major = Decimal::from(net) * p.destination_btc_price / sats_per_btc;
-            let destination_amount = major_to_minor_floor(destination_major, destination).ok_or_else(overflow)?;
-            (amount, destination_amount, gross, fee)
+            (amount, fee, send, stroops_to_minor_floor(buffered, destination), path)
         }
         AmountSide::Destination => {
-            let destination_major = minor_to_major(amount, destination);
-            let net = (destination_major * sats_per_btc / p.destination_btc_price)
+            let target = (Decimal::from(minor_to_stroops(amount, destination).ok_or_else(overflow)?) / keep)
                 .ceil()
                 .to_i64()
                 .ok_or_else(overflow)?;
-            let gross = (Decimal::from(net + p.flat_fee_sats) * ten_k / (ten_k - bps))
-                .ceil()
-                .to_i64()
-                .ok_or_else(overflow)?;
-            let source_major = Decimal::from(gross) * p.source_btc_price / sats_per_btc;
-            let source_amount = major_to_minor_ceil(source_major, source).ok_or_else(overflow)?;
-            (source_amount, amount, gross, gross - net)
+            let path = ledger.quote_receive(source, destination, target).await?;
+            let send = stroops_to_minor_ceil(path.source_amount, source);
+            let gross = (Decimal::from(send + fees.flat_fee_minor) * Decimal::from(10_000)
+                / Decimal::from(10_000 - fees.fee_bps))
+            .ceil()
+            .to_i64()
+            .ok_or_else(overflow)?;
+            (gross, gross - send, send, amount, path)
         }
     };
     if destination_amount <= 0 {
         return Err(too_small());
     }
-
-    let fee_source_amount = major_to_minor_floor(Decimal::from(fee_sats) * p.source_btc_price / sats_per_btc, source)
-        .ok_or_else(overflow)?;
-    let exchange_rate = (p.destination_btc_price / p.source_btc_price).round_dp(8).normalize();
-
+    // Units are stroops on both sides, so the ratio is destination units per source unit.
+    let exchange_rate = if path.source_amount > 0 {
+        (Decimal::from(path.destination_amount) / Decimal::from(path.source_amount))
+            .round_dp(8)
+            .normalize()
+    } else {
+        Decimal::ZERO
+    };
     Ok(QuoteAmounts {
         source_amount,
+        fee_source_amount: fee,
+        send_amount: send,
         destination_amount,
-        gross_sats,
-        fee_sats,
-        fee_source_amount,
         exchange_rate,
+        hops: path.hops,
     })
 }
 
@@ -129,6 +146,10 @@ pub async fn create_quote(state: &AppState, user_id: &str, req: CreateQuoteReque
             "source and destination currencies must differ".into(),
         ));
     }
+    let collection = state
+        .collections
+        .get(source)
+        .ok_or_else(|| AppError::Validation(format!("senders can't pay in {source} yet")))?;
     let adapter = match req.rail {
         Some(rail) => state.payouts.get(destination, rail),
         None => state.payouts.default_for(destination),
@@ -140,22 +161,28 @@ pub async fn create_quote(state: &AppState, user_id: &str, req: CreateQuoteReque
         ));
     }
 
-    let (source_price, destination_price) =
-        tokio::try_join!(state.fx.btc_price(source), state.fx.btc_price(destination))?;
-    let rate_source = if source_price.source == destination_price.source {
-        source_price.source.clone()
-    } else {
-        format!("{}+{}", source_price.source, destination_price.source)
-    };
-    let (source_btc_price, destination_btc_price) = (source_price.price, destination_price.price);
-    let pricing = Pricing {
-        source_btc_price,
-        destination_btc_price,
+    let fees = Fees {
         fee_bps: state.config.fee_bps,
-        flat_fee_sats: state.config.flat_fee_sats,
+        flat_fee_minor: state.config.flat_fee_minor,
+        slippage_bps: state.config.slippage_bps,
     };
-    let amounts = compute(source, destination, req.amount, req.amount_side, &pricing)?;
+    let amounts = compute(
+        state.ledger.as_ref(),
+        source,
+        destination,
+        req.amount,
+        req.amount_side,
+        &fees,
+    )
+    .await?;
 
+    if let Some(max) = collection.max_deposit_minor()
+        && amounts.source_amount > max
+    {
+        return Err(AppError::Validation(format!(
+            "deposit exceeds the {source} per-transaction limit of {max} minor units"
+        )));
+    }
     if let Some(max) = adapter.max_payout_minor()
         && amounts.destination_amount > max
     {
@@ -181,14 +208,14 @@ pub async fn create_quote(state: &AppState, user_id: &str, req: CreateQuoteReque
         payout_amount_guaranteed: adapter.guarantees_destination_amount(),
         amount_side: req.amount_side,
         source_amount: amounts.source_amount,
-        destination_amount: amounts.destination_amount,
-        amount_sats: amounts.gross_sats,
-        fee_sats: amounts.fee_sats,
         fee_source_amount: amounts.fee_source_amount,
         fee_bps: state.config.fee_bps,
+        send_amount: amounts.send_amount,
+        destination_amount: amounts.destination_amount,
         exchange_rate: amounts.exchange_rate.to_string(),
-        rate_source,
-        rate_as_of: source_price.as_of.min(destination_price.as_of),
+        rate_source: state.ledger.name().to_string(),
+        conversion_path: Json(amounts.hops),
+        rate_as_of: now,
         expires_at: now + Duration::seconds(state.config.quote_ttl_secs),
         created_at: now,
     };
@@ -198,50 +225,83 @@ pub async fn create_quote(state: &AppState, user_id: &str, req: CreateQuoteReque
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{collections::HashMap, sync::Arc};
 
-    fn pricing() -> Pricing {
-        Pricing {
-            source_btc_price: Decimal::from(60_000_000),       // XOF per BTC
-            destination_btc_price: Decimal::from(150_000_000), // NGN per BTC
+    use super::*;
+    use crate::adapters::{fx::StaticFxProvider, stellar::simulated::SimulatedLedger};
+
+    fn ledger(spread_bps: i64) -> SimulatedLedger {
+        let fx = StaticFxProvider::new(HashMap::from([
+            (Currency::Ngn, Decimal::from(1_500)),
+            (Currency::Kes, Decimal::from(130)),
+        ]));
+        SimulatedLedger::new(Arc::new(fx), spread_bps, 60)
+    }
+
+    fn fees() -> Fees {
+        Fees {
             fee_bps: 100,
-            flat_fee_sats: 0,
+            flat_fee_minor: 0,
+            slippage_bps: 50,
         }
     }
 
-    #[test]
-    fn source_side_xof_to_ngn() {
-        let q = compute(Currency::Xof, Currency::Ngn, 100_000, AmountSide::Source, &pricing()).unwrap();
-        // 100,000 XOF = 166,666 sats; 1% fee = 1,667 sats; 164,999 sats = ₦247,498.50.
-        assert_eq!(q.gross_sats, 166_666);
-        assert_eq!(q.fee_sats, 1_667);
-        assert_eq!(q.destination_amount, 24_749_850);
-        assert_eq!(q.fee_source_amount, 1_000);
-        assert_eq!(q.exchange_rate.to_string(), "2.5");
-    }
-
-    #[test]
-    fn destination_side_delivers_at_least_the_requested_amount() {
+    #[tokio::test]
+    async fn source_side_ngn_to_kes() {
         let q = compute(
-            Currency::Xof,
+            &ledger(0),
             Currency::Ngn,
-            24_749_850,
-            AmountSide::Destination,
-            &pricing(),
+            Currency::Kes,
+            15_000_000,
+            AmountSide::Source,
+            &fees(),
         )
+        .await
         .unwrap();
-        assert_eq!(q.destination_amount, 24_749_850);
-        let net_sats = q.gross_sats - q.fee_sats;
-        let delivered = Decimal::from(net_sats) * Decimal::from(150_000_000) / Decimal::from(SATS_PER_BTC);
-        assert!(delivered * Decimal::from(100) >= Decimal::from(24_749_850));
+        // ₦150,000; 1% fee = ₦1,500; ₦148,500 = 99 USD = KSh 12,870; minus 0.5% = KSh 12,805.65.
+        assert_eq!(q.fee_source_amount, 150_000);
+        assert_eq!(q.send_amount, 14_850_000);
+        assert_eq!(q.destination_amount, 1_280_565);
+        assert_eq!(q.hops, ["NGN", "USD", "KES"]);
+        assert_eq!(q.exchange_rate.to_string(), "0.08666667");
     }
 
-    #[test]
-    fn rejects_amounts_that_do_not_cover_fees() {
-        let p = Pricing {
-            flat_fee_sats: 1_000,
-            ..pricing()
+    #[tokio::test]
+    async fn destination_side_delivers_at_least_the_requested_amount() {
+        let l = ledger(30);
+        let q = compute(
+            &l,
+            Currency::Ngn,
+            Currency::Kes,
+            1_280_565,
+            AmountSide::Destination,
+            &fees(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(q.destination_amount, 1_280_565);
+        assert_eq!(q.source_amount - q.fee_source_amount, q.send_amount);
+        let out = l
+            .quote_send(
+                Currency::Ngn,
+                minor_to_stroops(q.send_amount, Currency::Ngn).unwrap(),
+                Currency::Kes,
+            )
+            .await
+            .unwrap();
+        assert!(out.destination_amount >= minor_to_stroops(1_280_565, Currency::Kes).unwrap());
+    }
+
+    #[tokio::test]
+    async fn rejects_amounts_that_do_not_cover_fees() {
+        let f = Fees {
+            flat_fee_minor: 1_000,
+            ..fees()
         };
-        assert!(compute(Currency::Xof, Currency::Ngn, 100, AmountSide::Source, &p).is_err());
+        assert!(
+            compute(&ledger(0), Currency::Ngn, Currency::Kes, 500, AmountSide::Source, &f)
+                .await
+                .is_err()
+        );
     }
 }

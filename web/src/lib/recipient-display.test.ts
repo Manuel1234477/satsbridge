@@ -16,7 +16,7 @@ describe('formatRecipientAccount', () => {
   it('shows provider and country for mobile money', () => {
     expect(formatRecipientAccount('SN:WAVE:*****4567', 'MOBILE_MONEY', operators)).toBe('Wave · Senegal · *****4567');
   });
-  it('leaves other rails alone', () => {
-    expect(formatRecipientAccount('ada@tapnob.io', 'LIGHTNING_ADDRESS', banks)).toBe('ada@tapnob.io');
+  it('leaves M-Pesa numbers alone', () => {
+    expect(formatRecipientAccount('******5678', 'KE_MOBILE_MONEY', banks)).toBe('******5678');
   });
 });

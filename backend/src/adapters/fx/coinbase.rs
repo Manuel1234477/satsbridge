@@ -1,4 +1,4 @@
-//! Coinbase public exchange-rates API (no key): `GET /v2/exchange-rates?currency=BTC`.
+//! Coinbase public exchange-rates API (no key): `GET /v2/exchange-rates?currency=USD`.
 
 use std::collections::HashMap;
 
@@ -42,7 +42,7 @@ pub fn parse(body: &[u8]) -> Result<HashMap<Currency, Decimal>, AdapterError> {
         .rates;
     let rate = |code: &str| rates.get(code).and_then(|r| parse_positive(r));
 
-    let mut prices: HashMap<Currency, Decimal> = [Currency::Gnf, Currency::Kes, Currency::Ngn]
+    let mut prices: HashMap<Currency, Decimal> = [Currency::Gnf, Currency::Kes, Currency::Ngn, Currency::Ghs]
         .into_iter()
         .filter_map(|c| rate(c.code()).map(|p| (c, p)))
         .collect();
@@ -61,7 +61,7 @@ impl PriceSource for CoinbaseSource {
         let body = self
             .client
             .get(url)
-            .query(&[("currency", "BTC")])
+            .query(&[("currency", "USD")])
             .send()
             .await
             .and_then(|r| r.error_for_status())
@@ -79,12 +79,13 @@ mod tests {
 
     #[test]
     fn parses_rates_and_derives_cfa() {
-        let body = br#"{"data":{"currency":"BTC","rates":{"EUR":"70000","NGN":"109948756.45","KES":"10732760.49","GNF":"729971164.5","XOF":"1","USD":"0"}}}"#;
+        let body = br#"{"data":{"currency":"USD","rates":{"EUR":"0.92","NGN":"1549.81","KES":"129.25","GNF":"8650.5","GHS":"15.4","XOF":"1","BTC":"0"}}}"#;
         let prices = parse(body).unwrap();
-        assert_eq!(prices[&Currency::Ngn].to_string(), "109948756.45");
-        assert_eq!(prices[&Currency::Gnf].to_string(), "729971164.5");
+        assert_eq!(prices[&Currency::Ngn].to_string(), "1549.81");
+        assert_eq!(prices[&Currency::Gnf].to_string(), "8650.5");
+        assert_eq!(prices[&Currency::Ghs].to_string(), "15.4");
         // Feed's own XOF value is ignored in favour of the EUR peg.
-        assert_eq!(prices[&Currency::Xof], Decimal::from(45_916_990));
+        assert_eq!(prices[&Currency::Xof], Decimal::new(60_348_044, 5));
     }
 
     #[test]

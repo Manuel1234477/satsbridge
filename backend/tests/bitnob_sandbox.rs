@@ -102,9 +102,15 @@ async fn adapter(base: &str, callback_url: &str) -> BitnobPayoutAdapter {
         config(base, SECRET, callback_url),
     ));
     let limits = client.limits().await.unwrap();
-    BitnobPayoutAdapter::connect(client, Currency::Ngn, Rail::NgBankTransfer, &["NG".to_string()], &limits)
-        .await
-        .unwrap()
+    BitnobPayoutAdapter::connect(
+        client,
+        Currency::Ngn,
+        Rail::NgBankTransfer,
+        &["NG".to_string()],
+        &limits,
+    )
+    .await
+    .unwrap()
 }
 
 fn bank(account: &str) -> Recipient {
@@ -124,7 +130,6 @@ async fn pay(adapter: &BitnobPayoutAdapter, key: &str, account: &str) -> String 
             recipient: &recipient,
             account_name: Some("ADA OBI"),
             amount_minor: 10_000_000,
-            amount_sats: 100_000,
             currency: Currency::Ngn,
             narration: format!("SatsBridge {key}"),
         })
@@ -206,7 +211,6 @@ async fn rejects_amounts_outside_limits_and_bad_beneficiaries() {
             recipient: &recipient,
             account_name: Some("ADA OBI"),
             amount_minor: 10_000_000,
-            amount_sats: 100_000,
             currency: Currency::Ngn,
             narration: "x".into(),
         })
@@ -219,10 +223,9 @@ async fn serves_guinea_mobile_money() {
     let (_sandbox, base) = start_sandbox().await;
     let client = Arc::new(BitnobClient::new(reqwest::Client::new(), config(&base, SECRET, "")));
     let limits = client.limits().await.unwrap();
-    let adapter =
-        BitnobPayoutAdapter::connect(client, Currency::Gnf, Rail::MobileMoney, &["GN".to_string()], &limits)
-            .await
-            .unwrap();
+    let adapter = BitnobPayoutAdapter::connect(client, Currency::Gnf, Rail::MobileMoney, &["GN".to_string()], &limits)
+        .await
+        .unwrap();
     let operators = adapter.institutions(Some("GN")).await.unwrap();
     assert!(operators.iter().any(|o| o.code == "OM"));
     assert!(operators.iter().any(|o| o.code == "MTN"));

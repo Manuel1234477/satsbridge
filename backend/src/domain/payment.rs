@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-/// Payment lifecycle from PRD §11, plus the NGN reversal rule from the NGN addendum (A.6).
+/// Payment lifecycle.
+///
+/// `AWAITING_PAYMENT` waits for the sender's bank transfer; `PAYMENT_DETECTED` means it arrived and
+/// the Stellar settlement is in progress; `SETTLED` means the conversion is final on Stellar.
+/// A payout reversal after success re-opens the payment for refund (NGN addendum A.6), and a
+/// deposit that arrives after expiry goes straight to refund.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[sqlx(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -32,6 +37,8 @@ impl PaymentStatus {
                 // Only for a provider reversal after a reported success.
                 | (Completed, Failed)
                 | (Failed, RefundPending)
+                // A bank transfer that lands after the payment expired.
+                | (Expired, RefundPending)
                 | (RefundPending, Refunded)
         )
     }
@@ -80,5 +87,6 @@ mod tests {
         assert!(Completed.can_transition_to(Failed));
         assert!(Failed.can_transition_to(RefundPending));
         assert!(!Completed.can_transition_to(RefundPending));
+        assert!(Expired.can_transition_to(RefundPending));
     }
 }

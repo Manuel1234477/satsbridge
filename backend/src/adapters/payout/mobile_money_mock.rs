@@ -1,4 +1,4 @@
-//! Offline stand-in for mobile money payouts (XOF, XAF, GNF), so those corridors can be demoed
+//! Offline stand-in for mobile money payouts (XOF, XAF, GNF, GHS), so those corridors can be demoed
 //! without Bitnob. Accepts 8-12 digit numbers; uses the given name or a demo one.
 
 use async_trait::async_trait;
@@ -67,8 +67,13 @@ impl PayoutAdapter for MockMobileMoneyAdapter {
     }
 
     fn countries(&self) -> Vec<String> {
-        let all = ["BJ", "BF", "CI", "GW", "ML", "NE", "SN", "TG", "CM", "CF", "TD", "CG", "GQ", "GA", "GN"];
-        all.iter().filter(|c| currency_for_country(c) == Some(self.currency)).map(|c| c.to_string()).collect()
+        let all = [
+            "BJ", "BF", "CI", "GW", "ML", "NE", "SN", "TG", "CM", "CF", "TD", "CG", "GQ", "GA", "GN", "GH",
+        ];
+        all.iter()
+            .filter(|c| currency_for_country(c) == Some(self.currency))
+            .map(|c| c.to_string())
+            .collect()
     }
 
     async fn institutions(&self, _country: Option<&str>) -> Result<Vec<Institution>, AdapterError> {

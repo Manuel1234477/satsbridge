@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { CheckCircle2, FileText, QrCode } from 'lucide-react';
+import { CheckCircle2, FileText, Landmark } from 'lucide-react';
 import type { Quote } from '@/lib/api/schemas';
 import { formatWithCode } from '@/lib/money';
 import { rateAgeSeconds } from '@/lib/rate-freshness';
@@ -75,7 +75,8 @@ export function LiveRatePanel({ quote, sourceExponent, destinationExponent, stal
             1 {quote.source_currency} ≈ {quote.exchange_rate} {quote.destination_currency}
           </p>
           <p className="label">
-            {quote.rate_source} · updated {rateAgeSeconds(quote.rate_as_of, now)}s ago
+            Stellar DEX {quote.conversion_path.join(' → ')} · {quote.rate_source === 'simulated' ? 'simulated' : 'testnet'} · updated{' '}
+            {rateAgeSeconds(quote.rate_as_of, now)}s ago
           </p>
         </div>
         <QuoteRing quote={quote} size={compact ? 48 : 64} secondsLeft={secondsLeft} />
@@ -94,7 +95,11 @@ export function LiveRatePanel({ quote, sourceExponent, destinationExponent, stal
           </dd>
         </div>
       </dl>
-      {!quote.payout_amount_guaranteed && <p className="label">Estimated: the payout partner converts at its own rate.</p>}
+      {quote.payout_amount_guaranteed ? (
+        <p className="label">Guaranteed: the Stellar conversion delivers at least this, or you get a full refund.</p>
+      ) : (
+        <p className="label">Estimated: the payout partner converts at its own rate.</p>
+      )}
 
       <p aria-live="polite" className={isExpired ? 'text-sm text-[var(--pending)]' : 'label'}>
         {isExpired ? 'Quote expired. Updating…' : `Quote expires in ${secondsLeft}s`}
@@ -121,14 +126,14 @@ export function LiveRatePanel({ quote, sourceExponent, destinationExponent, stal
               Lock a rate in your currency.
             </li>
             <li>
-              <QrCode className="h-5 w-5" aria-hidden="true" />
-              <span className="font-semibold text-[var(--text)]">2. Pay invoice</span>
-              Pay once over Lightning.
+              <Landmark className="h-5 w-5" aria-hidden="true" />
+              <span className="font-semibold text-[var(--text)]">2. Bank transfer</span>
+              Pay in naira to your own account number.
             </li>
             <li>
               <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
               <span className="font-semibold text-[var(--text)]">3. Recipient paid</span>
-              They get their currency.
+              Settled on Stellar, paid out in their currency.
             </li>
           </ol>
         </div>

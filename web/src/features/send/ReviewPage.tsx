@@ -11,7 +11,6 @@ import { RAIL_LABELS } from '@/lib/rails';
 import { RailSelector } from '@/components/ui/RailSelector';
 import { useCountdown } from '@/hooks/useCountdown';
 import { NgBankRecipient } from '@/features/recipient/NgBankRecipient';
-import { LightningAddressRecipient } from '@/features/recipient/LightningAddressRecipient';
 import { KePhoneRecipient } from '@/features/recipient/KePhoneRecipient';
 import { MobileMoneyRecipient } from '@/features/recipient/MobileMoneyRecipient';
 import type { RecipientDraft } from '@/features/recipient/types';
@@ -74,7 +73,6 @@ export function ReviewPage({ quote, rail, currencies, onBack, onPaid }: ReviewPa
       {!draft && (
         <section className="card">
           {rail === 'NG_BANK_TRANSFER' && <NgBankRecipient onConfirm={setDraft} />}
-          {rail === 'LIGHTNING_ADDRESS' && <LightningAddressRecipient onConfirm={setDraft} />}
           {rail === 'KE_MOBILE_MONEY' && <KePhoneRecipient onConfirm={setDraft} />}
           {rail === 'MOBILE_MONEY' && (
             <MobileMoneyRecipient
@@ -139,7 +137,7 @@ export function ReviewPage({ quote, rail, currencies, onBack, onPaid }: ReviewPa
 
           <div className="dock">
             <button type="button" onClick={() => submit.mutate(draft)} disabled={isExpired || submit.isPending} className="btn btn-accent btn-block">
-              {submit.isPending ? 'Creating payment…' : paymentId ? 'Try getting the invoice again' : 'Confirm and continue'}
+              {submit.isPending ? 'Creating payment…' : paymentId ? 'Try getting the bank details again' : 'Confirm and continue'}
             </button>
             <button type="button" onClick={() => setDraft(null)} disabled={submit.isPending} className="btn btn-quiet btn-block">
               Change recipient

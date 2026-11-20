@@ -1,5 +1,4 @@
-//! Auth, rate limits, LNURL-pay, refunds, payout recovery, the ops dashboard, and the mobile
-//! money corridors.
+//! Auth, rate limits, payout recovery, the ops dashboard, and the mobile money corridors.
 
 mod common;
 
@@ -13,14 +12,12 @@ use common::*;
 use satsbridge::{
     adapters::{
         AdapterError,
-        lightning::decode_invoice,
         payout::{Institution, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient},
     },
     domain::{Currency, Rail, Recipient},
     services::{payments::PayoutEventStatus, recovery},
 };
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 // --- auth and limits ---
 
@@ -38,14 +35,30 @@ async fn payments_are_private_to_their_user() {
         StatusCode::UNAUTHORIZED
     );
 
-    let (id, _) = app.ngn_payment_awaiting_invoice().await;
+    let (id, _) = app.kes_payment_awaiting_deposit().await;
     let other = app.new_user().await;
     let (status, _) = app
         .raw(Method::GET, &format!("/api/v1/payments/{id}"), Some(&other), None)
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    for path in ["pay", "refund"] {
+        let (status, _) = app
+            .raw(
+                Method::POST,
+                &format!("/api/v1/payments/{id}/{path}"),
+                Some(&other),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
     let (status, _) = app
-        .raw(Method::POST, &format!("/api/v1/payments/{id}/pay"), Some(&other), None)
+        .raw(
+            Method::POST,
+            &format!("/api/v1/dev/payments/{id}/deposit"),
+            Some(&other),
+            None,
+        )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -65,7 +78,7 @@ async fn payments_are_private_to_their_user() {
 
     // Someone else's quote can't be used either.
     let quote = app
-        .quote(json!({ "source_currency": "XOF", "destination_currency": "KES", "amount": 50_000 }))
+        .quote(json!({ "source_currency": "NGN", "destination_currency": "KES", "amount": SEND_KOBO }))
         .await;
     let body =
         json!({ "quote_id": quote["id"], "recipient": { "rail": "KE_MOBILE_MONEY", "phone_number": "0712345678" } });
@@ -79,7 +92,7 @@ async fn payments_are_private_to_their_user() {
 
 #[tokio::test]
 async fn rate_limits_users_and_signups() {
-    let app = build(120, |config, _, _| {
+    let app = build(120, |config, _| {
         config.rate_limit.per_minute = 3;
         config.rate_limit.signups_per_hour = 2;
     })
@@ -102,164 +115,6 @@ async fn rate_limits_users_and_signups() {
         app.raw(Method::POST, "/api/v1/users", None, None).await.0,
         StatusCode::TOO_MANY_REQUESTS
     );
-}
-
-// --- LNURL-pay ---
-
-fn lnurl_target(lnurl: &str) -> String {
-    let (hrp, data) = bech32::decode(lnurl).unwrap();
-    assert!(hrp.as_str().eq_ignore_ascii_case("lnurl"));
-    String::from_utf8(data).unwrap()
-}
-
-#[tokio::test]
-async fn lnurl_pay_serves_the_payments_one_invoice() {
-    let app = app_with(120).await;
-    let (id, invoice) = app.ngn_payment_awaiting_invoice().await;
-    let lnurl = invoice["lnurl"].as_str().unwrap();
-    assert!(lnurl.starts_with("LNURL1"));
-    let url = lnurl_target(lnurl);
-    assert_eq!(url, format!("{PUBLIC_URL}/api/v1/lnurlp/{id}"));
-
-    let path = url.trim_start_matches(PUBLIC_URL).to_string();
-    let (status, pay_request) = app.raw(Method::GET, &path, None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    let msat = invoice["amount_sats"].as_i64().unwrap() * 1000;
-    assert_eq!(pay_request["tag"], "payRequest");
-    assert_eq!(
-        (pay_request["minSendable"].as_i64(), pay_request["maxSendable"].as_i64()),
-        (Some(msat), Some(msat))
-    );
-    assert_eq!(pay_request["callback"], format!("{url}/callback"));
-
-    let (_, wrong) = app
-        .raw(Method::GET, &format!("{path}/callback?amount=1000"), None, None)
-        .await;
-    assert_eq!(wrong["status"], "ERROR");
-    let (_, right) = app
-        .raw(Method::GET, &format!("{path}/callback?amount={msat}"), None, None)
-        .await;
-    assert_eq!(right["pr"], invoice["payment_request"], "same invoice as BOLT11");
-
-    // LUD-06: the invoice commits to the metadata the wallet was shown.
-    let metadata = pay_request["metadata"].as_str().unwrap();
-    let decoded = decode_invoice(right["pr"].as_str().unwrap()).unwrap();
-    assert_eq!(decoded.description_hash, Some(hex::encode(Sha256::digest(metadata))));
-
-    app.pay_and_notify(&invoice["payment_hash"]).await;
-    assert_eq!(app.raw(Method::GET, &path, None, None).await.1["status"], "ERROR");
-    assert!(app.status_of(&id).await["lnurl"].is_null());
-}
-
-#[tokio::test]
-async fn lnurl_callback_creates_the_invoice_if_needed() {
-    let app = app_with(120).await;
-    let quote = app
-        .quote(json!({ "source_currency": "XOF", "destination_currency": "KES", "amount": 50_000 }))
-        .await;
-    let id = app
-        .create_payment(
-            &quote,
-            json!({ "rail": "KE_MOBILE_MONEY", "phone_number": "0712345678" }),
-        )
-        .await;
-    let details = app.status_of(&id).await;
-    assert_eq!(details["status"], "QUOTED");
-    let path = lnurl_target(details["lnurl"].as_str().unwrap())
-        .trim_start_matches(PUBLIC_URL)
-        .to_string();
-    let msat = quote["amount_sats"].as_i64().unwrap() * 1000;
-    let (_, right) = app
-        .raw(Method::GET, &format!("{path}/callback?amount={msat}"), None, None)
-        .await;
-    assert!(right["pr"].as_str().unwrap().starts_with("lnbcrt"));
-    assert_eq!(app.status_of(&id).await["status"], "AWAITING_PAYMENT");
-}
-
-// --- refunds ---
-
-/// NGN payment whose mock payout then fails: REFUND_PENDING.
-async fn refundable_payment(app: &TestApp) -> (String, i64) {
-    let (id, invoice) = app.ngn_payment_awaiting_invoice().await;
-    app.pay_and_notify(&invoice["payment_hash"]).await;
-    app.mock_payout(&id, "failed").await;
-    let details = app.status_of(&id).await;
-    assert_eq!(details["status"], "REFUND_PENDING", "{details}");
-    (id, invoice["amount_sats"].as_i64().unwrap())
-}
-
-#[tokio::test]
-async fn failed_payouts_are_refunded_to_the_sender() {
-    let app = app_with(120).await;
-    let (id, sats) = refundable_payment(&app).await;
-    let refund = |pr: &str| json!({ "payment_request": pr });
-    let path = format!("/api/v1/payments/{id}/refund");
-
-    let other = app.new_user().await;
-    let (good, hash) = bolt11(sats as u64 * 1000, None);
-    assert_eq!(
-        app.raw(Method::POST, &path, Some(&other), Some(refund(&good))).await.0,
-        StatusCode::NOT_FOUND
-    );
-
-    let (wrong_amount, _) = bolt11(1_000, None);
-    let (status, body) = app.call(Method::POST, &path, Some(refund(&wrong_amount))).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-
-    let (status, body) = app.call(Method::POST, &path, Some(refund(&good))).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["status"], "REFUNDED");
-    assert_eq!(body["refund_sats"], sats);
-    assert_eq!(app.node.paid_out.lock().unwrap().as_slice(), [hash]);
-
-    let (another, _) = bolt11(sats as u64 * 1000, None);
-    assert_eq!(
-        app.call(Method::POST, &path, Some(refund(&another))).await.0,
-        StatusCode::CONFLICT
-    );
-    assert_eq!(app.node.sent(), 1);
-}
-
-#[tokio::test]
-async fn refunds_with_unknown_outcome_are_resolved_by_recovery() {
-    let app = app_with(120).await;
-    let (id, sats) = refundable_payment(&app).await;
-    let path = format!("/api/v1/payments/{id}/refund");
-
-    // A definite failure releases the lock.
-    *app.node.fail_sends.lock().unwrap() = Some(AdapterError::Rejected("no route".into()));
-    let (pr, _) = bolt11(sats as u64 * 1000, None);
-    assert_eq!(
-        app.call(Method::POST, &path, Some(json!({ "payment_request": pr })))
-            .await
-            .0,
-        StatusCode::BAD_GATEWAY
-    );
-    assert!(app.status_of(&id).await["refund_payment_hash"].is_null());
-
-    // An unknown outcome keeps it, so no second refund can start...
-    *app.node.fail_sends.lock().unwrap() = Some(AdapterError::Unavailable("timeout".into()));
-    let (pr, hash) = bolt11(sats as u64 * 1000, None);
-    let (status, body) = app
-        .call(Method::POST, &path, Some(json!({ "payment_request": pr })))
-        .await;
-    assert_eq!(
-        (status, body["status"].as_str()),
-        (StatusCode::OK, Some("REFUND_PENDING"))
-    );
-    assert_eq!(body["refund_payment_hash"], hash);
-    let (pr2, _) = bolt11(sats as u64 * 1000, None);
-    assert_eq!(
-        app.call(Method::POST, &path, Some(json!({ "payment_request": pr2 })))
-            .await
-            .0,
-        StatusCode::CONFLICT
-    );
-
-    // ...until recovery sees the payment went through.
-    app.node.paid_out.lock().unwrap().push(hash);
-    assert_eq!(recovery::run_once(&app.state).await.unwrap().refunds_completed, 1);
-    assert_eq!(app.status_of(&id).await["status"], "REFUNDED");
 }
 
 // --- payout recovery ---
@@ -330,7 +185,7 @@ impl PayoutAdapter for FlakyPayout {
 }
 
 async fn flaky_app(flaky: Arc<FlakyPayout>, tweak: impl FnOnce(&mut satsbridge::Config)) -> TestApp {
-    build(120, move |config, payouts, _| {
+    build(120, move |config, payouts| {
         config.recovery.base_backoff_secs = 0;
         tweak(config);
         payouts.register(flaky);
@@ -338,10 +193,10 @@ async fn flaky_app(flaky: Arc<FlakyPayout>, tweak: impl FnOnce(&mut satsbridge::
     .await
 }
 
-/// XOF -> XOF isn't allowed, so pay XAF in and XOF out.
+/// ₦150,000 -> XOF mobile money, deposited and settled on Stellar.
 async fn settled_xof_payment(app: &TestApp) -> String {
     let quote = app
-        .quote(json!({ "source_currency": "XAF", "destination_currency": "XOF", "amount": 50_000, "rail": "MOBILE_MONEY" }))
+        .quote(json!({ "source_currency": "NGN", "destination_currency": "XOF", "amount": SEND_KOBO, "rail": "MOBILE_MONEY" }))
         .await;
     let id = app
         .create_payment(
@@ -349,8 +204,8 @@ async fn settled_xof_payment(app: &TestApp) -> String {
             json!({ "rail": "MOBILE_MONEY", "country": "SN", "provider_code": "WAVE", "phone_number": "771234567" }),
         )
         .await;
-    let invoice = app.invoice_for(&id).await;
-    app.pay_and_notify(&invoice["payment_hash"]).await;
+    app.pay(&id).await;
+    app.deposit(&id, None).await;
     id
 }
 
@@ -421,7 +276,7 @@ async fn recovery_waits_for_backoff_and_gives_up_after_max_attempts() {
         timeouts: 1,
         ..Default::default()
     });
-    let app = build(120, |_, payouts, _| payouts.register(flaky.clone())).await;
+    let app = build(120, |_, payouts| payouts.register(flaky.clone())).await;
     settled_xof_payment(&app).await;
     assert_eq!(
         recovery::run_once(&app.state).await.unwrap(),
@@ -485,6 +340,13 @@ async fn admin_can_fail_a_stuck_payout_into_refund() {
         (StatusCode::OK, Some("REFUND_PENDING")),
         "{body}"
     );
+    // The conversion is reversed on Stellar and the sender refunded automatically.
+    let details = app.status_of(&id).await;
+    assert_eq!(
+        stellar_steps(&details),
+        steps(&[("settle", "succeeded"), ("reverse", "succeeded")])
+    );
+    assert_eq!(details["refund"]["status"], "submitted");
 }
 
 #[tokio::test]
@@ -511,19 +373,24 @@ async fn admin_summary_reports_metrics() {
         StatusCode::UNAUTHORIZED
     );
 
-    let (done, invoice) = app.ngn_payment_awaiting_invoice().await;
-    app.pay_and_notify(&invoice["payment_hash"]).await;
+    let (done, _) = app.kes_payment_awaiting_deposit().await;
+    app.deposit(&done, None).await;
     app.mock_payout(&done, "success").await;
-    refundable_payment(&app).await;
+    let (failed, _) = app.kes_payment_awaiting_deposit().await;
+    app.deposit(&failed, None).await;
+    app.mock_payout(&failed, "failed").await;
 
     let (status, summary) = app.admin(Method::GET, "/api/v1/admin/summary", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(summary["total_payments"], 2);
     assert_eq!(summary["completion_rate"], 0.5);
     assert_eq!(summary["refund_pending"], 1);
-    assert_eq!(summary["corridors"][0]["source_currency"], "XOF");
+    assert_eq!(summary["corridors"][0]["source_currency"], "NGN");
+    assert_eq!(summary["corridors"][0]["destination_currency"], "KES");
     assert_eq!(summary["corridors"][0]["completed"], 1);
-    assert!(summary["avg_settlement_secs"].is_number());
+    assert!(summary["avg_settlement_secs"].is_number(), "{summary}");
+    assert_eq!(summary["ledger"], "simulated");
+    assert_eq!(summary["collections"], json!(["NGN"]));
     assert!(
         summary["rails"]
             .as_array()
@@ -544,8 +411,24 @@ async fn admin_summary_reports_metrics() {
 
 // --- mobile money corridors ---
 
+/// Quote ₦150,000 into `currency`, pay to `recipient`, deposit, and complete the payout.
+async fn complete_mobile_money(app: &TestApp, currency: &str, recipient: Value) -> Value {
+    let quote = app
+        .quote(json!({ "source_currency": "NGN", "destination_currency": currency, "amount": SEND_KOBO }))
+        .await;
+    assert_eq!(quote["destination_rail"], "MOBILE_MONEY", "only rail for {currency}");
+    assert_eq!(quote["conversion_path"], json!(["NGN", "USD", currency]));
+    let id = app.create_payment(&quote, recipient).await;
+    app.pay(&id).await;
+    app.deposit(&id, None).await;
+    app.mock_payout(&id, "success").await;
+    let details = app.status_of(&id).await;
+    assert_eq!(details["status"], "COMPLETED", "{details}");
+    details
+}
+
 #[tokio::test]
-async fn xof_to_xaf_mobile_money() {
+async fn ngn_to_xaf_mobile_money() {
     let app = app_with(120).await;
     let (_, operators) = app
         .raw(
@@ -558,10 +441,10 @@ async fn xof_to_xaf_mobile_money() {
     assert!(operators.as_array().unwrap().iter().any(|o| o["code"] == "MTN"));
 
     let quote = app
-        .quote(json!({ "source_currency": "XOF", "destination_currency": "XAF", "amount": 100_000 }))
+        .quote(json!({ "source_currency": "NGN", "destination_currency": "XAF", "amount": SEND_KOBO }))
         .await;
-    assert_eq!(quote["destination_rail"], "MOBILE_MONEY", "only rail for XAF");
-
+    // ₦148,500 = $99 = 59,400 XAF, less the 0.5% buffer.
+    assert_eq!(quote["destination_amount"], 59_103);
     let wrong_country =
         json!({ "rail": "MOBILE_MONEY", "country": "SN", "provider_code": "MTN", "phone_number": "677123456" });
     let (status, _) = app
@@ -573,23 +456,18 @@ async fn xof_to_xaf_mobile_money() {
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
-    let id = app
-        .create_payment(
-            &quote,
-            json!({ "rail": "MOBILE_MONEY", "country": "CM", "provider_code": "MTN", "phone_number": "677123456", "account_name": "Jean Mbarga" }),
-        )
-        .await;
-    let invoice = app.invoice_for(&id).await;
-    app.pay_and_notify(&invoice["payment_hash"]).await;
-    app.mock_payout(&id, "success").await;
-    let details = app.status_of(&id).await;
-    assert_eq!(details["status"], "COMPLETED");
+    let details = complete_mobile_money(
+        &app,
+        "XAF",
+        json!({ "rail": "MOBILE_MONEY", "country": "CM", "provider_code": "MTN", "phone_number": "677123456", "account_name": "Jean Mbarga" }),
+    )
+    .await;
     assert_eq!(details["recipient_name"], "Jean Mbarga");
     assert_eq!(details["recipient_masked"], "CM:MTN:*****3456");
 }
 
 #[tokio::test]
-async fn xof_to_gnf_mobile_money() {
+async fn ngn_to_gnf_and_ghs_mobile_money() {
     let app = app_with(120).await;
     let (_, operators) = app
         .raw(
@@ -601,21 +479,29 @@ async fn xof_to_gnf_mobile_money() {
         .await;
     assert!(operators.as_array().unwrap().iter().any(|o| o["code"] == "ORANGE"));
 
-    let quote = app
-        .quote(json!({ "source_currency": "XOF", "destination_currency": "GNF", "amount": 100_000 }))
-        .await;
-    assert_eq!(quote["destination_rail"], "MOBILE_MONEY", "only rail for GNF");
-
-    let id = app
-        .create_payment(
-            &quote,
-            json!({ "rail": "MOBILE_MONEY", "country": "GN", "provider_code": "ORANGE", "phone_number": "622123456", "account_name": "Mamadou Diallo" }),
-        )
-        .await;
-    let invoice = app.invoice_for(&id).await;
-    app.pay_and_notify(&invoice["payment_hash"]).await;
-    app.mock_payout(&id, "success").await;
-    let details = app.status_of(&id).await;
-    assert_eq!(details["status"], "COMPLETED");
+    let details = complete_mobile_money(
+        &app,
+        "GNF",
+        json!({ "rail": "MOBILE_MONEY", "country": "GN", "provider_code": "ORANGE", "phone_number": "622123456", "account_name": "Mamadou Diallo" }),
+    )
+    .await;
     assert_eq!(details["recipient_masked"], "GN:ORANGE:*****3456");
+
+    let (_, currencies) = app.raw(Method::GET, "/api/v1/currencies", None, None).await;
+    let ghs = currencies
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["code"] == "GHS")
+        .unwrap();
+    assert_eq!(ghs["payout_rails"][0]["countries"], json!(["GH"]));
+    let details = complete_mobile_money(
+        &app,
+        "GHS",
+        json!({ "rail": "MOBILE_MONEY", "country": "GH", "provider_code": "MTN", "phone_number": "0241234567", "account_name": "Kwame Mensah" }),
+    )
+    .await;
+    // ₦148,500 = $99 = GH₵1,485, less the buffer.
+    assert_eq!(details["expected_payout"], 147_757);
+    assert_eq!(details["destination_currency"], "GHS");
 }

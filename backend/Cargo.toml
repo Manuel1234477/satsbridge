@@ -4,26 +4,27 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 default-run = "satsbridge"
-description = "Bitcoin/Lightning-settled cross-border payments across African currencies"
+description = "Stellar-settled cross-border payments from Naira to other African currencies"
 license = "MIT"
 
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"
-bech32 = "0.11"
-bitcoin = "0.32"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
+ed25519-dalek = "2"
+getrandom = "0.3"
 hex = "0.4"
 hmac = "0.12"
-lightning-invoice = { version = "0.33", features = ["std"] }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+stellar-strkey = "1"
+stellar-xdr = { version = "30", default-features = false, features = ["std", "base64"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive", "macros", "migrate", "chrono", "json"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }

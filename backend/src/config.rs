@@ -6,18 +6,17 @@ use rust_decimal::Decimal;
 use crate::{
     adapters::{
         bitnob::{self, BitnobConfig},
-        lightning::lnbits::LnbitsConfig,
+        stellar,
     },
     domain::{Currency, currency::currency_for_country},
 };
 
-/// Offline fallback prices (approximate, Oct 2026). Only used when `static` is in `FX_PROVIDERS`.
-pub const DEMO_FX_PRICES: &str = "XOF=48300000,XAF=48300000,GNF=730000000,KES=10700000,NGN=110000000";
+/// Offline fallback rates (units per 1 USD, approximate, Nov 2026). Used by the `static`
+/// provider in `FX_PROVIDERS`, and by default for the simulated ledger.
+pub const DEMO_FX_RATES: &str = "NGN=1550,KES=129,GHS=15.4,XOF=603.5,XAF=603.5,GNF=8650";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FxProviderKind {
-    /// Bitnob's payout rate, for currencies with Bitnob corridors.
-    Bitnob,
     Coinbase,
     CoinGecko,
     Static,
@@ -28,12 +27,11 @@ impl FromStr for FxProviderKind {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "bitnob" => Ok(Self::Bitnob),
             "coinbase" => Ok(Self::Coinbase),
             "coingecko" => Ok(Self::CoinGecko),
             "static" => Ok(Self::Static),
             other => Err(format!(
-                "unknown FX provider {other:?} (expected bitnob, coinbase, coingecko or static)"
+                "unknown FX provider {other:?} (expected coinbase, coingecko or static)"
             )),
         }
     }
@@ -43,11 +41,9 @@ impl FromStr for FxProviderKind {
 pub struct FxConfig {
     /// Tried in order for each currency.
     pub providers: Vec<FxProviderKind>,
-    pub static_prices: HashMap<Currency, Decimal>,
+    pub static_rates: HashMap<Currency, Decimal>,
     pub cache_ttl_secs: i64,
-    /// Each Bitnob refresh creates throwaway payout quotes, so it refreshes less often.
-    pub bitnob_ttl_secs: i64,
-    /// Last good prices are served for this long while an upstream is failing.
+    /// Last good rates are served for this long while an upstream is failing.
     pub max_age_secs: i64,
     pub http_timeout_ms: u64,
     pub coinbase_base_url: String,
@@ -56,18 +52,11 @@ pub struct FxConfig {
 }
 
 impl FxConfig {
-    /// Defaults to `bitnob,coinbase,coingecko` when Bitnob is configured, so quotes use the rate
-    /// Bitnob pays out at; otherwise `coinbase,coingecko`.
-    pub fn from_env(bitnob_enabled: bool) -> anyhow::Result<Self> {
-        let default = if bitnob_enabled {
-            "bitnob,coinbase,coingecko"
-        } else {
-            "coinbase,coingecko"
-        };
+    pub fn from_env() -> anyhow::Result<Self> {
         let providers = env::var("FX_PROVIDERS")
             .ok()
             .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| default.into())
+            .unwrap_or_else(|| "coinbase,coingecko,static".into())
             .split(',')
             .filter(|p| !p.trim().is_empty())
             .map(|p| p.parse().map_err(anyhow::Error::msg))
@@ -75,15 +64,11 @@ impl FxConfig {
         if providers.is_empty() {
             bail!("FX_PROVIDERS must list at least one provider");
         }
-        if providers.contains(&FxProviderKind::Bitnob) && !bitnob_enabled {
-            bail!("FX_PROVIDERS includes bitnob but BITNOB_COUNTRIES is empty");
-        }
         Ok(Self {
             providers,
-            static_prices: parse_prices(&env::var("FX_STATIC_PRICES").unwrap_or_else(|_| DEMO_FX_PRICES.into()))?,
-            cache_ttl_secs: parse_or("FX_CACHE_TTL_SECS", 30)?,
-            bitnob_ttl_secs: parse_or("FX_BITNOB_TTL_SECS", 60)?,
-            max_age_secs: parse_or("FX_MAX_AGE_SECS", 300)?,
+            static_rates: parse_rates(&env::var("FX_STATIC_RATES").unwrap_or_else(|_| DEMO_FX_RATES.into()))?,
+            cache_ttl_secs: parse_or("FX_CACHE_TTL_SECS", 60)?,
+            max_age_secs: parse_or("FX_MAX_AGE_SECS", 600)?,
             http_timeout_ms: parse_or("FX_HTTP_TIMEOUT_MS", 2_000)?,
             coinbase_base_url: env::var("COINBASE_BASE_URL")
                 .unwrap_or_else(|_| crate::adapters::fx::coinbase::DEFAULT_BASE_URL.into()),
@@ -93,14 +78,13 @@ impl FxConfig {
         })
     }
 
-    /// Static prices only; for tests and offline demos.
-    pub fn static_only(static_prices: HashMap<Currency, Decimal>) -> Self {
+    /// Static rates only; for tests and offline demos.
+    pub fn static_only(static_rates: HashMap<Currency, Decimal>) -> Self {
         Self {
             providers: vec![FxProviderKind::Static],
-            static_prices,
-            cache_ttl_secs: 30,
-            bitnob_ttl_secs: 60,
-            max_age_secs: 300,
+            static_rates,
+            cache_ttl_secs: 60,
+            max_age_secs: 600,
             http_timeout_ms: 2_000,
             coinbase_base_url: crate::adapters::fx::coinbase::DEFAULT_BASE_URL.into(),
             coingecko_base_url: crate::adapters::fx::coingecko::DEFAULT_BASE_URL.into(),
@@ -109,43 +93,110 @@ impl FxConfig {
     }
 }
 
-#[derive(Clone)]
-pub struct LightningConfig {
-    pub lnbits: LnbitsConfig,
-    /// Settlement watcher interval in seconds; 0 disables it (only allowed with a webhook URL).
-    pub poll_secs: u64,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LedgerKind {
+    /// Stellar testnet through Horizon.
+    Testnet,
+    /// In-memory ledger priced from the FX feed; nothing touches the network.
+    Simulated,
 }
 
-impl LightningConfig {
-    pub fn from_env(public_base_url: Option<&str>) -> anyhow::Result<Self> {
-        let lnbits = LnbitsConfig {
-            base_url: required("LNBITS_URL")?,
-            invoice_key: required("LNBITS_INVOICE_KEY")?,
-            admin_key: env::var("LNBITS_ADMIN_KEY").ok().filter(|k| !k.is_empty()),
-            webhook_url: env::var("LNBITS_WEBHOOK_URL")
-                .ok()
-                .filter(|u| !u.is_empty())
-                .or_else(|| public_base_url.map(|b| format!("{b}/api/v1/webhooks/lnbits"))),
+/// Deliberately not `Debug`: it holds secret keys.
+#[derive(Clone)]
+pub struct StellarConfig {
+    pub ledger: LedgerKind,
+    pub horizon_url: String,
+    pub network_passphrase: String,
+    pub issuer_secret: Option<String>,
+    pub treasury_secret: Option<String>,
+    /// Asset code paths route through.
+    pub bridge_code: String,
+    /// How long a signed transaction stays valid; also the wait before an unconfirmed one is rebuilt.
+    pub tx_timeout_secs: i64,
+    pub explorer_url: Option<String>,
+    /// DEX spread per hop for the simulated ledger.
+    pub simulated_spread_bps: i64,
+}
+
+impl StellarConfig {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let ledger = match env::var("STELLAR_LEDGER")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "" | "testnet" => LedgerKind::Testnet,
+            "simulated" => LedgerKind::Simulated,
+            other => bail!("STELLAR_LEDGER must be testnet or simulated, not {other:?}"),
         };
-        let poll_secs = parse_or("LIGHTNING_POLL_SECS", 5)?;
-        if poll_secs == 0 && lnbits.webhook_url.is_none() {
-            bail!("LIGHTNING_POLL_SECS=0 needs LNBITS_WEBHOOK_URL, or no payment would ever settle");
+        let secret = |key: &str| {
+            env::var(key)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        let config = Self {
+            ledger,
+            horizon_url: env::var("STELLAR_HORIZON_URL").unwrap_or_else(|_| stellar::TESTNET_HORIZON.into()),
+            network_passphrase: env::var("STELLAR_NETWORK_PASSPHRASE")
+                .unwrap_or_else(|_| stellar::TESTNET_PASSPHRASE.into()),
+            issuer_secret: secret("STELLAR_ISSUER_SECRET"),
+            treasury_secret: secret("STELLAR_TREASURY_SECRET"),
+            bridge_code: env::var("STELLAR_BRIDGE_ASSET").unwrap_or_else(|_| "USD".into()),
+            tx_timeout_secs: parse_or("STELLAR_TX_TIMEOUT_SECS", 60)?,
+            explorer_url: env::var("STELLAR_EXPLORER_URL")
+                .ok()
+                .or_else(|| Some("https://stellar.expert/explorer/testnet".into()))
+                .filter(|u| !u.is_empty()),
+            simulated_spread_bps: parse_or("SIMULATED_SPREAD_BPS", 30)?,
+        };
+        if config.network_passphrase != stellar::TESTNET_PASSPHRASE {
+            bail!("only Stellar testnet is supported (STELLAR_NETWORK_PASSPHRASE)");
         }
-        Ok(Self { lnbits, poll_secs })
+        if ledger == LedgerKind::Testnet && (config.issuer_secret.is_none() || config.treasury_secret.is_none()) {
+            bail!(
+                "STELLAR_ISSUER_SECRET and STELLAR_TREASURY_SECRET must be set (run `cargo run --bin stellar_setup`), \
+                 or set STELLAR_LEDGER=simulated"
+            );
+        }
+        Ok(config)
     }
+
+    pub fn simulated() -> Self {
+        Self {
+            ledger: LedgerKind::Simulated,
+            horizon_url: stellar::TESTNET_HORIZON.into(),
+            network_passphrase: stellar::TESTNET_PASSPHRASE.into(),
+            issuer_secret: None,
+            treasury_secret: None,
+            bridge_code: "USD".into(),
+            tx_timeout_secs: 60,
+            explorer_url: None,
+            simulated_spread_bps: 30,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct CollectionConfig {
+    /// Register the mock NGN virtual-account collection rail.
+    pub mock_collections: bool,
+    /// Cap for one NGN deposit, in kobo.
+    pub ngn_max_deposit_minor: i64,
+    /// How long the sender has to make the bank transfer.
+    pub deposit_expiry_secs: i64,
 }
 
 #[derive(Clone)]
 pub struct PayoutConfig {
-    /// Register mock rails (NGN bank, Tando KES, XOF/XAF mobile money) wherever no real
-    /// provider covers that currency and rail.
+    /// Register mock rails (NGN bank, Tando KES, mobile money) wherever no real provider covers
+    /// that currency and rail. The NGN bank rail also carries refunds to senders.
     pub mock_payouts: bool,
     /// Cap for the mock NGN rail, in kobo.
     pub ngn_max_payout_minor: i64,
     /// Set when `BITNOB_COUNTRIES` is non-empty.
     pub bitnob: Option<BitnobConfig>,
-    /// Lightning Address domains for the Tapnob NGN rail; empty disables it.
-    pub tapnob_domains: Vec<String>,
 }
 
 impl PayoutConfig {
@@ -175,31 +226,23 @@ impl PayoutConfig {
                 client_secret: required("BITNOB_CLIENT_SECRET")?,
                 webhook_secret: required("BITNOB_WEBHOOK_SECRET")?,
                 callback_url,
-                from_asset: env::var("BITNOB_FROM_ASSET").unwrap_or_else(|_| "BTC".into()),
+                from_asset: env::var("BITNOB_FROM_ASSET").unwrap_or_else(|_| "USDC".into()),
                 countries,
             })
         };
-        let tapnob_domains = env::var("TAPNOB_DOMAINS")
-            .unwrap_or_else(|_| "tapnob.io".into())
-            .split(',')
-            .map(|d| d.trim().to_ascii_lowercase())
-            .filter(|d| !d.is_empty())
-            .collect();
         Ok(Self {
             mock_payouts: parse_or("MOCK_PAYOUTS", true)?,
             ngn_max_payout_minor: parse_or("NGN_MAX_PAYOUT_MINOR", 50_000_000)?,
             bitnob,
-            tapnob_domains,
         })
     }
 
-    /// Mock rails only, no Tapnob; for tests and offline demos.
+    /// Mock rails only; for tests and offline demos.
     pub fn mock(ngn_max_payout_minor: i64) -> Self {
         Self {
             mock_payouts: true,
             ngn_max_payout_minor,
             bitnob: None,
-            tapnob_domains: vec![],
         }
     }
 }
@@ -222,15 +265,18 @@ pub struct RecoveryConfig {
     pub base_backoff_secs: i64,
     /// Ask the provider about accepted payouts with no webhook after this long.
     pub unconfirmed_after_secs: i64,
+    /// Look up Stellar transactions with no recorded outcome after this long.
+    pub stellar_confirm_after_secs: i64,
 }
 
 impl RecoveryConfig {
     pub fn defaults() -> Self {
         Self {
-            poll_secs: 30,
+            poll_secs: 10,
             max_attempts: 5,
             base_backoff_secs: 120,
             unconfirmed_after_secs: 600,
+            stellar_confirm_after_secs: 15,
         }
     }
 }
@@ -240,8 +286,8 @@ impl RecoveryConfig {
 pub struct Config {
     pub bind_addr: SocketAddr,
     pub database_url: String,
-    /// Public https origin of this server, e.g. `https://pay.example.com`. Used for LNURL and
-    /// as the default webhook URLs given to LNbits and Bitnob.
+    /// Public https origin of this server, e.g. `https://pay.example.com`. The default base of
+    /// the webhook URL given to Bitnob.
     pub public_base_url: Option<String>,
     /// Bearer token for `/api/v1/admin/*`; admin routes are off when unset.
     pub admin_api_key: Option<String>,
@@ -252,13 +298,16 @@ pub struct Config {
     pub recovery: RecoveryConfig,
     pub provider_webhook_secret: String,
     pub quote_ttl_secs: i64,
-    pub invoice_expiry_secs: i64,
     pub resolution_ttl_secs: i64,
     pub fee_bps: i64,
-    pub flat_fee_sats: i64,
+    /// Flat fee in source-currency minor units.
+    pub flat_fee_minor: i64,
+    /// Held back from the DEX estimate so the quoted payout survives small price moves.
+    pub slippage_bps: i64,
     pub fx: FxConfig,
+    pub stellar: StellarConfig,
+    pub collections: CollectionConfig,
     pub payouts: PayoutConfig,
-    pub lightning: LightningConfig,
     pub dev_routes: bool,
 }
 
@@ -271,7 +320,7 @@ impl Config {
         let payouts = PayoutConfig::from_env(public_base_url.as_deref())?;
         let config = Self {
             bind_addr: parse_or("BIND_ADDR", "0.0.0.0:8080".parse()?)?,
-            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://satsbridge.db".into()),
+            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://satsbridge-stellar.db".into()),
             admin_api_key: env::var("ADMIN_API_KEY").ok().filter(|k| !k.is_empty()),
             cors_allowed_origins: env::var("CORS_ALLOWED_ORIGINS")
                 .unwrap_or_default()
@@ -285,30 +334,34 @@ impl Config {
                 signups_per_hour: parse_or("RATE_LIMIT_SIGNUPS_PER_HOUR", 20)?,
             },
             recovery: RecoveryConfig {
-                poll_secs: parse_or("RECOVERY_POLL_SECS", 30)?,
+                poll_secs: parse_or("RECOVERY_POLL_SECS", 10)?,
                 max_attempts: parse_or("PAYOUT_MAX_ATTEMPTS", 5)?,
                 base_backoff_secs: parse_or("PAYOUT_RETRY_BACKOFF_SECS", 120)?,
                 unconfirmed_after_secs: parse_or("PAYOUT_UNCONFIRMED_AFTER_SECS", 600)?,
+                stellar_confirm_after_secs: parse_or("STELLAR_CONFIRM_AFTER_SECS", 15)?,
             },
             provider_webhook_secret: required("PROVIDER_WEBHOOK_SECRET")?,
             quote_ttl_secs: parse_or("QUOTE_TTL_SECS", 120)?,
-            invoice_expiry_secs: parse_or("INVOICE_EXPIRY_SECS", 600)?,
             resolution_ttl_secs: parse_or("RESOLUTION_TTL_SECS", 600)?,
             fee_bps: parse_or("FEE_BPS", 100)?,
-            flat_fee_sats: parse_or("FLAT_FEE_SATS", 0)?,
-            fx: FxConfig::from_env(payouts.bitnob.is_some())?,
-            lightning: LightningConfig::from_env(public_base_url.as_deref())?,
+            flat_fee_minor: parse_or("FLAT_FEE_MINOR", 0)?,
+            slippage_bps: parse_or("SLIPPAGE_BPS", 50)?,
+            fx: FxConfig::from_env()?,
+            stellar: StellarConfig::from_env()?,
+            collections: CollectionConfig {
+                mock_collections: parse_or("MOCK_COLLECTIONS", true)?,
+                ngn_max_deposit_minor: parse_or("NGN_MAX_DEPOSIT_MINOR", 500_000_000)?,
+                deposit_expiry_secs: parse_or("DEPOSIT_EXPIRY_SECS", 1_800)?,
+            },
             payouts,
             public_base_url,
             dev_routes: parse_or("DEV_ROUTES", false)?,
         };
-        if let Some(url) = &config.public_base_url
-            && !url.starts_with("https://")
-        {
-            tracing::warn!(%url, "PUBLIC_BASE_URL is not https: Lightning wallets will refuse LNURL from it");
-        }
         if !(0..10_000).contains(&config.fee_bps) {
             bail!("FEE_BPS must be between 0 and 9999");
+        }
+        if !(0..5_000).contains(&config.slippage_bps) {
+            bail!("SLIPPAGE_BPS must be between 0 and 4999");
         }
         Ok(config)
     }
@@ -331,18 +384,18 @@ where
     }
 }
 
-/// Parses `XOF=60000000,NGN=150000000` (major units per 1 BTC).
-pub fn parse_prices(raw: &str) -> anyhow::Result<HashMap<Currency, Decimal>> {
+/// Parses `NGN=1550,KES=129` (major units per 1 USD).
+pub fn parse_rates(raw: &str) -> anyhow::Result<HashMap<Currency, Decimal>> {
     raw.split(',')
         .filter(|pair| !pair.trim().is_empty())
         .map(|pair| {
             let (code, price) = pair
                 .split_once('=')
-                .with_context(|| format!("invalid price entry {pair:?}"))?;
+                .with_context(|| format!("invalid rate entry {pair:?}"))?;
             let currency = Currency::from_str(code).map_err(anyhow::Error::msg)?;
-            let price = Decimal::from_str(price.trim()).with_context(|| format!("invalid price for {code}"))?;
+            let price = Decimal::from_str(price.trim()).with_context(|| format!("invalid rate for {code}"))?;
             if price <= Decimal::ZERO {
-                bail!("price for {code} must be positive");
+                bail!("rate for {code} must be positive");
             }
             Ok((currency, price))
         })

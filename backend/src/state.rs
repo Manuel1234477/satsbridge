@@ -1,6 +1,5 @@
 use std::{collections::BTreeMap, str::FromStr, sync::Arc, time::Duration};
 
-use rust_decimal::Decimal;
 use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
@@ -8,15 +7,20 @@ use sqlx::{
 
 use crate::{
     adapters::{
-        bitnob::{BitnobClient, payout::BitnobPayoutAdapter, rates::BitnobRateSource},
+        bitnob::{BitnobClient, payout::BitnobPayoutAdapter},
+        collection::{CollectionRegistry, mock::MockNgnCollection},
         fx::{CachedFx, CoinGeckoSource, CoinbaseSource, FallbackFx, FxProvider, StaticFxProvider},
-        lightning::{LightningAdapter, lnbits::LnbitsAdapter},
         payout::{
-            PayoutRegistry, lightning_address::LightningAddressAdapter, mobile_money_mock::MockMobileMoneyAdapter,
-            ngn_mock::MockNgnAdapter, tando_mock::MockTandoAdapter,
+            PayoutRegistry, mobile_money_mock::MockMobileMoneyAdapter, ngn_mock::MockNgnAdapter,
+            tando_mock::MockTandoAdapter,
+        },
+        stellar::{
+            StellarLedger,
+            horizon::{HorizonConfig, HorizonLedger},
+            simulated::SimulatedLedger,
         },
     },
-    config::{Config, FxConfig, FxProviderKind, LightningConfig, PayoutConfig},
+    config::{CollectionConfig, Config, FxConfig, FxProviderKind, LedgerKind, PayoutConfig, StellarConfig},
     domain::{Currency, Rail, currency::currency_for_country},
     ratelimit::RateLimits,
 };
@@ -26,15 +30,12 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub pool: SqlitePool,
     pub fx: Arc<dyn FxProvider>,
-    pub lightning: Arc<dyn LightningAdapter>,
+    pub ledger: Arc<dyn StellarLedger>,
+    /// Serializes building and submitting treasury transactions, which share one sequence number.
+    pub ledger_lock: Arc<tokio::sync::Mutex<()>>,
+    pub collections: Arc<CollectionRegistry>,
     pub payouts: Arc<PayoutRegistry>,
     pub limits: Arc<RateLimits>,
-}
-
-/// Bitnob client plus the rate probes for the corridors it serves.
-pub struct BitnobRates {
-    pub client: Arc<BitnobClient>,
-    pub probes: Vec<(Currency, String, Decimal)>,
 }
 
 impl AppState {
@@ -42,7 +43,8 @@ impl AppState {
         config: Config,
         pool: SqlitePool,
         fx: Arc<dyn FxProvider>,
-        lightning: Arc<dyn LightningAdapter>,
+        ledger: Arc<dyn StellarLedger>,
+        collections: CollectionRegistry,
         payouts: PayoutRegistry,
     ) -> Self {
         Self {
@@ -50,18 +52,21 @@ impl AppState {
             config: Arc::new(config),
             pool,
             fx,
-            lightning,
+            ledger,
+            ledger_lock: Arc::new(tokio::sync::Mutex::new(())),
+            collections: Arc::new(collections),
             payouts: Arc::new(payouts),
         }
     }
 
-    /// Wires adapters from config and checks LNbits and Bitnob credentials.
+    /// Wires adapters from config and checks the Stellar accounts and Bitnob credentials.
     pub async fn from_config(config: Config) -> anyhow::Result<Self> {
         let pool = connect(&config.database_url).await?;
-        let lightning = build_lightning(&config.lightning).await?;
-        let (payouts, bitnob) = build_payouts(&config.payouts, lightning.clone()).await?;
-        let fx = build_fx(&config.fx, bitnob)?;
-        Ok(Self::assemble(config, pool, fx, lightning, payouts))
+        let fx = build_fx(&config.fx)?;
+        let ledger = build_ledger(&config.stellar, fx.clone()).await?;
+        let collections = build_collections(&config.collections);
+        let payouts = build_payouts(&config.payouts).await?;
+        Ok(Self::assemble(config, pool, fx, ledger, collections, payouts))
     }
 }
 
@@ -79,56 +84,91 @@ pub async fn connect(database_url: &str) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
-fn http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
+pub fn http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .timeout(timeout)
         .user_agent(concat!("satsbridge/", env!("CARGO_PKG_VERSION")))
         .build()?)
 }
 
-/// Builds the provider chain from `FX_PROVIDERS`, e.g. `bitnob,coinbase,coingecko[,static]`.
-pub fn build_fx(cfg: &FxConfig, bitnob: Option<BitnobRates>) -> anyhow::Result<Arc<dyn FxProvider>> {
+/// Builds the provider chain from `FX_PROVIDERS`, e.g. `coinbase,coingecko,static`.
+pub fn build_fx(cfg: &FxConfig) -> anyhow::Result<Arc<dyn FxProvider>> {
     let client = http_client(Duration::from_millis(cfg.http_timeout_ms))?;
     let ttl = chrono::Duration::seconds(cfg.cache_ttl_secs);
     let max_age = chrono::Duration::seconds(cfg.max_age_secs);
-    let mut bitnob = bitnob;
-    let mut providers: Vec<Arc<dyn FxProvider>> = Vec::new();
-    for kind in &cfg.providers {
-        providers.push(match kind {
-            FxProviderKind::Bitnob => {
-                let rates = bitnob
-                    .take()
-                    .ok_or_else(|| anyhow::anyhow!("FX provider bitnob needs BITNOB_COUNTRIES"))?;
-                Arc::new(CachedFx::new(
-                    BitnobRateSource::new(rates.client, rates.probes),
-                    chrono::Duration::seconds(cfg.bitnob_ttl_secs),
+    let providers: Vec<Arc<dyn FxProvider>> = cfg
+        .providers
+        .iter()
+        .map(|kind| -> Arc<dyn FxProvider> {
+            match kind {
+                FxProviderKind::Coinbase => Arc::new(CachedFx::new(
+                    CoinbaseSource::new(client.clone(), &cfg.coinbase_base_url),
+                    ttl,
                     max_age,
-                ))
+                )),
+                FxProviderKind::CoinGecko => Arc::new(CachedFx::new(
+                    CoinGeckoSource::new(client.clone(), &cfg.coingecko_base_url, cfg.coingecko_api_key.clone()),
+                    ttl,
+                    max_age,
+                )),
+                FxProviderKind::Static => Arc::new(StaticFxProvider::new(cfg.static_rates.clone())),
             }
-            FxProviderKind::Coinbase => Arc::new(CachedFx::new(
-                CoinbaseSource::new(client.clone(), &cfg.coinbase_base_url),
-                ttl,
-                max_age,
-            )),
-            FxProviderKind::CoinGecko => Arc::new(CachedFx::new(
-                CoinGeckoSource::new(client.clone(), &cfg.coingecko_base_url, cfg.coingecko_api_key.clone()),
-                ttl,
-                max_age,
-            )),
-            FxProviderKind::Static => Arc::new(StaticFxProvider::new(cfg.static_prices.clone())),
-        });
-    }
+        })
+        .collect();
     Ok(Arc::new(FallbackFx::new(providers)))
+}
+
+/// Connects to Horizon and checks the issuer and treasury accounts, or builds the simulated ledger.
+pub async fn build_ledger(cfg: &StellarConfig, fx: Arc<dyn FxProvider>) -> anyhow::Result<Arc<dyn StellarLedger>> {
+    match cfg.ledger {
+        LedgerKind::Simulated => {
+            tracing::warn!("STELLAR_LEDGER=simulated: transactions are simulated in memory, nothing reaches Stellar");
+            Ok(Arc::new(SimulatedLedger::new(
+                fx,
+                cfg.simulated_spread_bps,
+                cfg.tx_timeout_secs,
+            )))
+        }
+        LedgerKind::Testnet => {
+            let ledger = HorizonLedger::new(
+                http_client(Duration::from_secs(45))?,
+                HorizonConfig {
+                    horizon_url: cfg.horizon_url.clone(),
+                    network_passphrase: cfg.network_passphrase.clone(),
+                    issuer_secret: cfg.issuer_secret.clone().unwrap_or_default(),
+                    treasury_secret: cfg.treasury_secret.clone().unwrap_or_default(),
+                    bridge_code: cfg.bridge_code.clone(),
+                    tx_timeout_secs: cfg.tx_timeout_secs,
+                    explorer_url: cfg.explorer_url.clone(),
+                },
+            )?;
+            ledger
+                .verify()
+                .await
+                .map_err(|e| anyhow::anyhow!("cannot use Stellar at {}: {e}", cfg.horizon_url))?;
+            tracing::info!(
+                horizon = %cfg.horizon_url,
+                issuer = %ledger.bridge_asset().issuer,
+                treasury = %ledger.treasury(),
+                "connected to Stellar testnet"
+            );
+            Ok(Arc::new(ledger))
+        }
+    }
+}
+
+pub fn build_collections(cfg: &CollectionConfig) -> CollectionRegistry {
+    let mut collections = CollectionRegistry::default();
+    if cfg.mock_collections {
+        collections.register(Arc::new(MockNgnCollection::new(cfg.ngn_max_deposit_minor)));
+    }
+    collections
 }
 
 /// Builds the payout rails. Bitnob corridors are checked against Bitnob at startup (credentials,
 /// limits, field rules); mocks fill in where no real provider serves a currency and rail.
-pub async fn build_payouts(
-    cfg: &PayoutConfig,
-    lightning: Arc<dyn LightningAdapter>,
-) -> anyhow::Result<(PayoutRegistry, Option<BitnobRates>)> {
+pub async fn build_payouts(cfg: &PayoutConfig) -> anyhow::Result<PayoutRegistry> {
     let mut payouts = PayoutRegistry::default();
-    let mut bitnob_rates = None;
 
     if let Some(bitnob) = &cfg.bitnob {
         let client = Arc::new(BitnobClient::new(http_client(Duration::from_secs(15))?, bitnob.clone()));
@@ -159,15 +199,12 @@ pub async fn build_payouts(
                 .1
                 .push(country.clone());
         }
-        let mut probes = Vec::new();
         for ((currency, _), (rail, countries)) in corridors {
             let adapter = BitnobPayoutAdapter::connect(client.clone(), currency, rail, &countries, &limits)
                 .await
                 .map_err(fail)?;
-            probes.extend(adapter.rate_probes());
             payouts.register(Arc::new(adapter));
         }
-        bitnob_rates = Some(BitnobRates { client, probes });
     }
 
     if cfg.mock_payouts {
@@ -175,45 +212,11 @@ pub async fn build_payouts(
             payouts.register(Arc::new(MockNgnAdapter::new(cfg.ngn_max_payout_minor)));
         }
         payouts.register(Arc::new(MockTandoAdapter));
-        for currency in [Currency::Xof, Currency::Xaf, Currency::Gnf] {
+        for currency in [Currency::Xof, Currency::Xaf, Currency::Gnf, Currency::Ghs] {
             if payouts.get(currency, Rail::MobileMoney).is_none() {
                 payouts.register(Arc::new(MockMobileMoneyAdapter::new(currency)));
             }
         }
     }
-
-    if !cfg.tapnob_domains.is_empty() {
-        // No redirects: LNURL hosts come from user input, so only allowlisted hosts are contacted.
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent(concat!("satsbridge/", env!("CARGO_PKG_VERSION")))
-            .build()?;
-        payouts.register(Arc::new(LightningAddressAdapter::tapnob(
-            http,
-            lightning,
-            cfg.tapnob_domains.clone(),
-        )));
-    }
-    Ok((payouts, bitnob_rates))
-}
-
-/// Connects to LNbits and fails fast on bad URL or keys.
-pub async fn build_lightning(cfg: &LightningConfig) -> anyhow::Result<Arc<dyn LightningAdapter>> {
-    let lnbits = LnbitsAdapter::new(http_client(Duration::from_secs(30))?, cfg.lnbits.clone());
-    let wallet = lnbits
-        .verify_credentials()
-        .await
-        .map_err(|e| anyhow::anyhow!("cannot use LNbits at {}: {e}", cfg.lnbits.base_url))?;
-    tracing::info!(
-        url = %cfg.lnbits.base_url,
-        wallet = %wallet.name,
-        balance_sats = wallet.balance / 1000,
-        can_send = cfg.lnbits.admin_key.is_some(),
-        "connected to LNbits"
-    );
-    if cfg.lnbits.admin_key.is_none() {
-        tracing::warn!("LNBITS_ADMIN_KEY not set: Lightning Address (Tapnob) payouts and refunds will fail");
-    }
-    Ok(Arc::new(lnbits))
+    Ok(payouts)
 }

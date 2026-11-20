@@ -320,7 +320,6 @@ impl PayoutAdapter for BitnobPayoutAdapter {
             account_name: Some(account_name),
             min_minor: Some(rules.min_minor),
             max_minor: Some(rules.max_minor),
-            ..Default::default()
         })
     }
 
@@ -346,17 +345,6 @@ impl PayoutAdapter for BitnobPayoutAdapter {
             )
             .await?;
         let quote_id = quote.quote_id.clone().unwrap_or_else(|| quote.id.clone());
-        if let Some(needed) = quote.sats()
-            && needed > request.amount_sats
-        {
-            // Customer was promised this amount; pay it and absorb the difference.
-            tracing::warn!(
-                payment_id = request.idempotency_key,
-                needed,
-                budget = request.amount_sats,
-                "Bitnob quote exceeds sat budget"
-            );
-        }
 
         let mut beneficiary = json!({
             "destination_type": destination_type(self.rail),
@@ -403,27 +391,7 @@ impl PayoutAdapter for BitnobPayoutAdapter {
     }
 }
 
-/// Probe amount used by the rate source: a typical payout, kept inside the country's limits.
-pub fn probe_amount(currency: Currency, rules: &CountryRules) -> Decimal {
-    let typical: i64 = match currency {
-        Currency::Ngn => 100_000,
-        Currency::Kes => 5_000,
-        _ => 50_000,
-    };
-    let typical = major_to_minor_floor(Decimal::from(typical), currency).unwrap_or(rules.min_minor);
-    minor_to_major(typical.clamp(rules.min_minor, rules.max_minor), currency)
-}
-
 impl BitnobPayoutAdapter {
-    /// Countries and probe amounts for [`super::rates::BitnobRateSource`].
-    pub fn rate_probes(&self) -> Vec<(Currency, String, Decimal)> {
-        self.countries
-            .iter()
-            .take(1)
-            .map(|r| (self.currency, r.country.clone(), probe_amount(self.currency, r)))
-            .collect()
-    }
-
     pub fn client(&self) -> &Arc<BitnobClient> {
         &self.client
     }
@@ -470,7 +438,6 @@ mod tests {
             recipient,
             account_name: Some("ADA OBI"),
             amount_minor,
-            amount_sats: 1_000_000,
             currency: Currency::Ngn,
             narration: "SatsBridge pay_1".into(),
         }

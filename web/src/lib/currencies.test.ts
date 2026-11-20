@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { CurrencyInfo } from './api/schemas';
-import { receivableCurrencies } from './currencies';
+import { receivableCurrencies, sendableCurrencies } from './currencies';
 
-const currency = (code: CurrencyInfo['code'], rails: CurrencyInfo['payout_rails']): CurrencyInfo => ({
+const currency = (code: CurrencyInfo['code'], rails: CurrencyInfo['payout_rails'], canSend = false): CurrencyInfo => ({
   code,
   name: code,
   exponent: 0,
+  stellar_asset: { code, issuer: 'GISSUER' },
+  can_send: canSend,
   payout_rails: rails,
 });
 
@@ -17,5 +19,12 @@ describe('receivableCurrencies', () => {
       currency('NGN', [{ rail: 'NG_BANK_TRANSFER', provider: 'bitnob', min_payout_minor: 50000, max_payout_minor: null, guaranteed_amount: true }]),
     ];
     expect(receivableCurrencies(list).map((c) => c.code)).toEqual(['XOF', 'NGN']);
+  });
+});
+
+describe('sendableCurrencies', () => {
+  it('keeps only currencies with a collection rail', () => {
+    const list = [currency('NGN', [], true), currency('KES', [])];
+    expect(sendableCurrencies(list).map((c) => c.code)).toEqual(['NGN']);
   });
 });

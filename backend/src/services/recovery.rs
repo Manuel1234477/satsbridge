@@ -1,11 +1,16 @@
-//! Recovery worker: finishes payouts that the normal path left unfinished.
+//! Recovery worker: finishes whatever the normal path left unfinished.
 //!
-//! 1. **Unsubmitted payouts** (crash before submission, or an unconfirmed attempt). Before any
+//! 0. **Unpaid payments** past their deposit deadline expire.
+//! 1. **Stellar transactions** with no recorded outcome are looked up (or resubmitted, or
+//!    rebuilt once provably expired), and **steps that never started** (a settle after a crash,
+//!    a redeem after a payout, a reverse after a failure, an automatic refund) are run, all via
+//!    [`payments::advance`].
+//! 2. **Unsubmitted payouts** (crash before submission, or an unconfirmed attempt). Before any
 //!    resubmission it asks the provider whether an earlier attempt already went through
 //!    (`find_payout`). Rails that can't answer that (`safe_to_retry() == false`) go to manual
 //!    review instead. Retries back off exponentially and stop after `PAYOUT_MAX_ATTEMPTS`.
-//! 2. **Unconfirmed payouts**: accepted, but no webhook after a while; asks the provider.
-//! 3. **Refunds in flight** whose Lightning outcome was unknown.
+//! 3. **Unconfirmed payouts**: accepted, but no webhook after a while; asks the provider.
+//! 4. **Refunds**: unconfirmed attempts and submitted refunds with no callback.
 
 use std::time::Duration;
 
@@ -13,18 +18,23 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use super::{
+    ledger,
     payments::{self, PayoutEvent},
     refunds,
 };
 use crate::{
     config::RecoveryConfig,
-    db::{self, Payout},
+    db::{self, Payout, StellarTxKind},
+    domain::PaymentStatus,
     error::AppResult,
     state::AppState,
 };
 
 #[derive(Debug, Default, Serialize, PartialEq, Eq)]
 pub struct RecoveryReport {
+    pub expired: usize,
+    pub stellar_resolved: usize,
+    pub advanced: usize,
     pub resubmitted: usize,
     pub reconciled: usize,
     pub confirmed: usize,
@@ -106,7 +116,48 @@ pub async fn recover_payout(state: &AppState, payout: &Payout, force: bool) -> A
 pub async fn run_once(state: &AppState) -> AppResult<RecoveryReport> {
     let cfg = state.config.recovery;
     let now = Utc::now();
-    let mut report = RecoveryReport::default();
+    let mut report = RecoveryReport {
+        expired: payments::expire_unpaid(state).await?,
+        ..Default::default()
+    };
+
+    let mut touched = Vec::new();
+    // Younger submissions are still being handled by the request that made them.
+    let settled_before = now - chrono::Duration::seconds(cfg.stellar_confirm_after_secs);
+    for tx in db::list_unconfirmed_stellar_txs(&state.pool, settled_before).await? {
+        let id = tx.payment_intent_id.clone();
+        match ledger::resolve(state, tx).await {
+            Ok(ledger::Step::Pending) => {}
+            Ok(_) => report.stellar_resolved += 1,
+            Err(err) => tracing::error!(payment_id = %id, error = %err, "Stellar transaction recovery failed"),
+        }
+        touched.push(id);
+    }
+    let missing = [
+        (vec![PaymentStatus::PaymentDetected], StellarTxKind::Settle, false),
+        (vec![PaymentStatus::Completed], StellarTxKind::Redeem, true),
+        (
+            vec![PaymentStatus::RefundPending, PaymentStatus::Refunded],
+            StellarTxKind::Reverse,
+            true,
+        ),
+    ];
+    for (statuses, kind, require_settled) in missing {
+        touched.extend(db::list_missing_stellar_step(&state.pool, &statuses, kind, require_settled).await?);
+    }
+    touched.extend(db::list_refunds_to_start(&state.pool).await?);
+    touched.sort();
+    touched.dedup();
+    for id in touched {
+        let before = db::get_payment(&state.pool, &id).await?.map(|p| p.status);
+        if let Err(err) = payments::advance(state, &id).await {
+            tracing::error!(payment_id = %id, error = %err, "advancing payment failed");
+            continue;
+        }
+        if db::get_payment(&state.pool, &id).await?.map(|p| p.status) != before {
+            report.advanced += 1;
+        }
+    }
 
     for payout in db::list_unsubmitted_payouts(&state.pool).await? {
         if !is_due(&cfg, &payout, now) {
@@ -148,7 +199,7 @@ pub async fn run_once(state: &AppState) -> AppResult<RecoveryReport> {
         }
     }
 
-    report.refunds_completed = refunds::check_in_flight(state).await?;
+    report.refunds_completed = refunds::recover(state).await?;
     Ok(report)
 }
 

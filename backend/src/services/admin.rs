@@ -1,10 +1,13 @@
-//! Operations views and actions for `/api/v1/admin/*` (PRD §15 "basic analytics and
-//! operational dashboard", §19 success metrics).
+//! Operations views and actions for `/api/v1/admin/*`: analytics, the review queue, and the
+//! Stellar treasury balances.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use super::recovery::{self, Outcome};
+use super::{
+    payments,
+    recovery::{self, Outcome},
+};
 use crate::{
     db::{self, CorridorStats, PaymentIntent, Payout, StatusCount},
     domain::{Currency, PaymentStatus, Rail},
@@ -28,11 +31,15 @@ pub struct Summary {
     pub completion_rate: Option<f64>,
     pub statuses: Vec<StatusCount>,
     pub corridors: Vec<CorridorStats>,
+    /// Deposit received -> settled on Stellar.
     pub avg_settlement_secs: Option<f64>,
     pub avg_payout_secs: Option<f64>,
     pub needs_review: i64,
     pub refund_pending: i64,
-    pub lightning: &'static str,
+    pub ledger: &'static str,
+    pub treasury: String,
+    /// Source currencies senders can pay in.
+    pub collections: Vec<Currency>,
     pub rails: Vec<RailInfo>,
 }
 
@@ -73,7 +80,9 @@ pub async fn summary(state: &AppState) -> AppResult<Summary> {
         avg_settlement_secs: timings.avg_settlement_secs,
         avg_payout_secs: timings.avg_payout_secs,
         needs_review: timings.needs_review,
-        lightning: state.lightning.name(),
+        ledger: state.ledger.name(),
+        treasury: state.ledger.treasury(),
+        collections: state.collections.currencies().collect(),
         rails,
     })
 }
@@ -136,29 +145,6 @@ pub async fn fail_payout(state: &AppState, id: &str, reason: &str) -> AppResult<
         ));
     }
     let reason = format!("marked failed by admin: {reason}");
-    let mut tx = state.pool.begin().await?;
-    if db::transition(
-        &mut tx,
-        id,
-        PaymentStatus::PayoutPending,
-        PaymentStatus::Failed,
-        "admin.fail_payout",
-        Some(&reason),
-    )
-    .await?
-    {
-        db::update_payout_status(&mut *tx, id, db::PayoutStatus::Failed, Some(&reason), Utc::now()).await?;
-        db::set_failure_reason(&mut *tx, id, &reason).await?;
-        db::transition(
-            &mut tx,
-            id,
-            PaymentStatus::Failed,
-            PaymentStatus::RefundPending,
-            "refund.pending",
-            None,
-        )
-        .await?;
-    }
-    tx.commit().await?;
-    Ok(())
+    payments::fail_payout(state, id, "admin.fail_payout", &reason).await?;
+    payments::advance(state, id).await
 }

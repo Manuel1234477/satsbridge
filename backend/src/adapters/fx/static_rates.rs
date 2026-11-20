@@ -7,7 +7,7 @@ use rust_decimal::Decimal;
 use super::{FxPrice, FxProvider};
 use crate::{adapters::AdapterError, domain::Currency};
 
-/// Fixed prices from configuration, for offline demos and tests.
+/// Fixed USD rates from configuration, for offline demos and tests.
 pub struct StaticFxProvider {
     prices: HashMap<Currency, Decimal>,
 }
@@ -24,14 +24,14 @@ impl FxProvider for StaticFxProvider {
         "static-config"
     }
 
-    async fn btc_price(&self, currency: Currency) -> Result<FxPrice, AdapterError> {
-        let price = self
+    async fn usd_rate(&self, currency: Currency) -> Result<FxPrice, AdapterError> {
+        let rate = self
             .prices
             .get(&currency)
             .copied()
-            .ok_or_else(|| AdapterError::Unavailable(format!("no static BTC price for {currency}")))?;
+            .ok_or_else(|| AdapterError::Unavailable(format!("no static USD rate for {currency}")))?;
         Ok(FxPrice {
-            price,
+            rate,
             source: self.name().to_string(),
             as_of: Utc::now(),
         })
