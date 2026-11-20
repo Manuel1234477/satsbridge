@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn parses_rates_and_derives_cfa() {
-        let body = br#"{"data":{"currency":"USD","rates":{"EUR":"0.92","NGN":"1549.81","KES":"129.25","GNF":"8650.5","GHS":"15.4","XOF":"1","BTC":"0"}}}"#;
+        let body = br#"{"data":{"currency":"USD","rates":{"EUR":"0.92","NGN":"1549.81","KES":"129.25","GNF":"8650.5","GHS":"15.4","XOF":"1"}}}"#;
         let prices = parse(body).unwrap();
         assert_eq!(prices[&Currency::Ngn].to_string(), "1549.81");
         assert_eq!(prices[&Currency::Gnf].to_string(), "8650.5");

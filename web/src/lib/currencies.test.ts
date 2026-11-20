@@ -16,7 +16,7 @@ describe('receivableCurrencies', () => {
     const list = [
       currency('XOF', [{ rail: 'MOBILE_MONEY', provider: 'mock', min_payout_minor: null, max_payout_minor: null, guaranteed_amount: true }]),
       currency('GNF', []),
-      currency('NGN', [{ rail: 'NG_BANK_TRANSFER', provider: 'bitnob', min_payout_minor: 50000, max_payout_minor: null, guaranteed_amount: true }]),
+      currency('NGN', [{ rail: 'NG_BANK_TRANSFER', provider: 'ngn-mock', min_payout_minor: 50000, max_payout_minor: null, guaranteed_amount: true }]),
     ];
     expect(receivableCurrencies(list).map((c) => c.code)).toEqual(['XOF', 'NGN']);
   });

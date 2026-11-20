@@ -52,7 +52,7 @@ impl CollectionAdapter for MockNgnCollection {
         let account_number = virtual_account(request.idempotency_key);
         Ok(DepositInstructions {
             bank_name: MOCK_BANK.into(),
-            account_name: format!("SATSBRIDGE / {}", &account_number[4..]),
+            account_name: format!("STELLARBRIDGE / {}", &account_number[4..]),
             reference: account_number.clone(),
             account_number,
             provider_reference: Some(format!("mockva_{}", request.idempotency_key)),

@@ -1,6 +1,6 @@
-# SatsBridge web app (Next.js)
+# StellarBridge web app (Next.js)
 
-Sender web app for SatsBridge: send naira, get a live quote from the Stellar DEX, confirm the recipient (M-Pesa, mobile money or bank), pay by bank transfer, and follow the payment through its settlement on Stellar to the receipt. Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4, TanStack Query and Zod.
+Sender web app for StellarBridge: send naira, get a live quote from the Stellar DEX, confirm the recipient (M-Pesa, mobile money or bank), pay by bank transfer, and follow the payment through its settlement on Stellar to the receipt. Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4, TanStack Query and Zod.
 
 **Status:** hackathon MVP, demo only. No real money is moved. This is a technical demonstration and not a licensed financial service.
 
@@ -79,7 +79,7 @@ Then run the frontend with `NEXT_PUBLIC_MOCK_API=false` (and `NEXT_PUBLIC_DEV_TO
 
 ## Mock mode
 
-`NEXT_PUBLIC_MOCK_API=true npm run dev` answers the same routes with the same JSON shapes; the same Zod schemas validate them. Payment progress is computed from timestamps, so reloading keeps the state. State is stored in `localStorage` under `satsbridge.mock.v2`. The bank transfer "arrives" 8 seconds after the details are shown (or at once with the dev button).
+`NEXT_PUBLIC_MOCK_API=true npm run dev` answers the same routes with the same JSON shapes; the same Zod schemas validate them. Payment progress is computed from timestamps, so reloading keeps the state. State is stored in `localStorage` under `stellarbridge.mock.v2`. The bank transfer "arrives" 8 seconds after the details are shown (or at once with the dev button).
 
 Magic values (the recipient's phone or account number, and amounts):
 

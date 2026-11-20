@@ -7,13 +7,10 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use common::*;
-use satsbridge::{
-    adapters::{bitnob::BitnobConfig, stellar::simulated::Inject},
-    domain::Currency,
-    security::SIGNATURE_HEADER,
-    services::recovery,
-};
 use serde_json::json;
+use stellarbridge::{
+    adapters::stellar::simulated::Inject, domain::Currency, security::SIGNATURE_HEADER, services::recovery,
+};
 
 #[tokio::test]
 async fn ngn_to_kes_settles_on_stellar_and_completes() {
@@ -430,64 +427,6 @@ async fn destination_side_quotes_deliver_the_exact_amount() {
     let details = app.status_of(&id).await;
     assert_eq!(details["status"], "PAYOUT_PENDING", "{details}");
     assert!(details["stellar_transactions"][0]["delivered"].as_i64().unwrap() >= 100_000_000_000);
-}
-
-#[tokio::test]
-async fn bitnob_webhooks_are_verified_and_mapped() {
-    use hmac::{Hmac, Mac};
-    const BITNOB_SECRET: &str = "bitnob-webhook-secret";
-    let app = build(120, |config, _| {
-        config.payouts.bitnob = Some(BitnobConfig {
-            base_url: "http://127.0.0.1:9".into(),
-            client_id: "c".into(),
-            client_secret: "s".into(),
-            webhook_secret: BITNOB_SECRET.into(),
-            callback_url: "https://example.test/api/v1/webhooks/bitnob".into(),
-            from_asset: "USDC".into(),
-            countries: vec!["KE".into()],
-        });
-    })
-    .await;
-    let (id, _) = app.kes_payment_awaiting_deposit().await;
-    app.deposit(&id, None).await;
-    let reference = app.status_of(&id).await["payout"]["provider_reference"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let send = |event: &str, event_id: &str, secret: &str| {
-        let body = json!({ "event": event, "event_id": event_id, "data": { "id": reference, "status": "success" } })
-            .to_string();
-        let mut mac = Hmac::<sha2::Sha512>::new_from_slice(secret.as_bytes()).unwrap();
-        mac.update(body.as_bytes());
-        Request::post("/api/v1/webhooks/bitnob")
-            .header("content-type", "application/json")
-            .header("x-bitnob-signature", hex::encode(mac.finalize().into_bytes()))
-            .body(Body::from(body))
-            .unwrap()
-    };
-
-    assert_eq!(
-        app.send(send("payouts.withdrawal.success", "e0", "wrong")).await.0,
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        app.send(send("payouts.processing", "e1", BITNOB_SECRET)).await.1["outcome"],
-        "ignored"
-    );
-    assert_eq!(
-        app.send(send("payouts.withdrawal.success", "e2", BITNOB_SECRET))
-            .await
-            .1["outcome"],
-        "processed"
-    );
-    assert_eq!(
-        app.send(send("payouts.withdrawal.success", "e2", BITNOB_SECRET))
-            .await
-            .1["outcome"],
-        "duplicate"
-    );
-    assert_eq!(app.status_of(&id).await["status"], "COMPLETED");
 }
 
 #[tokio::test]

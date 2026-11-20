@@ -1,12 +1,12 @@
-# SatsBridge
+# StellarBridge
 
 Cross-border payments from Nigerian naira to other African currencies, settled on the [Stellar](https://stellar.org) network.
 
-A sender in Nigeria pays in naira by bank transfer. SatsBridge settles the conversion on Stellar and pays the recipient in their own currency: Kenyan shillings by M-Pesa, Ghanaian cedis, CFA francs (XOF, XAF) or Guinean francs by mobile money. Stellar is the settlement layer underneath. The sender and recipient only ever see their own currencies.
+A sender in Nigeria pays in naira by bank transfer. StellarBridge settles the conversion on Stellar and pays the recipient in their own currency: Kenyan shillings by M-Pesa, Ghanaian cedis, CFA francs (XOF, XAF) or Guinean francs by mobile money. Stellar is the settlement layer underneath. The sender and recipient only ever see their own currencies.
 
 **Corridors:** NGN → KES, GHS, XOF, XAF, GNF
 **Network:** Stellar testnet
-**Status:** hackathon MVP, sandbox and demo use only. Settlement runs on real Stellar testnet. Bank collection and payouts are mocks unless Bitnob is configured. See [Implementation status](docs/implementation-status.md).
+**Status:** hackathon MVP, sandbox and demo use only. Settlement runs on real Stellar testnet. Bank collection and payouts are mocks behind provider interfaces. See [Implementation status](docs/implementation-status.md).
 
 ## How a payment flows
 
@@ -25,7 +25,7 @@ Quote (Stellar DEX) → Payment → Bank transfer in NGN → Settled on Stellar 
 | Settlement | Stellar testnet via Horizon: our issuer's fiat tokens, strict-send path payments over the DEX, transactions signed in Rust (`stellar-xdr`) |
 | Liquidity | A market-maker account with two-sided offers against a `USD` bridge token, priced from Coinbase and CoinGecko (`stellar_setup`) |
 | NGN collection | Per-payment virtual bank account (mock), deposit webhook |
-| Payouts | M-Pesa (Tando mock or Bitnob), mobile money (mock or Bitnob per country), NGN bank for refunds |
+| Payouts | M-Pesa, mobile money and NGN bank (for refunds), as mocks behind a provider interface |
 | Senders | Anonymous per-user bearer tokens; automatic refunds to the source account |
 | Operations | Admin API, recovery worker (Stellar transactions, payouts, refunds), rate limiting |
 
@@ -33,10 +33,9 @@ Quote (Stellar DEX) → Payment → Bank transfer in NGN → Settled on Stellar 
 
 | Path | Contents |
 |---|---|
-| [`backend/`](backend/) | Rust API (axum, tokio, sqlx/SQLite), the Stellar settlement layer, the `stellar_setup` testnet tool and a local Bitnob stand-in. Setup, configuration, API reference and demos are in the [backend README](backend/README.md). |
+| [`backend/`](backend/) | Rust API (axum, tokio, sqlx/SQLite), the Stellar settlement layer, and the `stellar_setup` testnet tool. Setup, configuration, API reference and demos are in the [backend README](backend/README.md). |
 | [`web/`](web/) | Next.js sender app: quote, pay by bank transfer, track the settlement on Stellar, get a receipt or refund. Runs against the backend or an in-browser mock. See the [web README](web/README.md). |
 | [`docs/implementation-status.md`](docs/implementation-status.md) | What is built, what has been verified against live services, and what's left |
-| [`docs/prd-addendum-ngn-payout.md`](docs/prd-addendum-ngn-payout.md) | Requirements for Naira payouts |
 
 ## Quick start
 

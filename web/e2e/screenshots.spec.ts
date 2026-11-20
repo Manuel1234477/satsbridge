@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { mkdirSync } from 'fs';
 
 // Opt-in: SHOTS=1 npx playwright test e2e/screenshots.spec.ts
-const OUT = process.env.SHOTS_DIR ?? '/tmp/satsbridge-shots';
+const OUT = process.env.SHOTS_DIR ?? '/tmp/stellarbridge-shots';
 
 const VIEWPORTS = [
   { name: 'mobile-390', width: 390, height: 844 },
@@ -14,7 +14,7 @@ for (const vp of VIEWPORTS) {
     test.skip(!process.env.SHOTS, 'set SHOTS=1 to capture screenshots');
     mkdirSync(OUT, { recursive: true });
     await page.setViewportSize({ width: vp.width, height: vp.height });
-    await page.addInitScript(() => localStorage.setItem('satsbridge.theme', 'dark'));
+    await page.addInitScript(() => localStorage.setItem('stellarbridge.theme', 'dark'));
 
     await page.goto('/');
     await page.getByLabel('Amount you send').fill('150000');

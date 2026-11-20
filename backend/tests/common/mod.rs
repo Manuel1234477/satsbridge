@@ -12,7 +12,8 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use satsbridge::{
+use serde_json::{Value, json};
+use stellarbridge::{
     AppState, Config,
     adapters::{
         collection::{CollectionRegistry, mock::MockNgnCollection},
@@ -29,7 +30,6 @@ use satsbridge::{
     security::{SIGNATURE_HEADER, sign},
     state::connect,
 };
-use serde_json::{Value, json};
 use tower::ServiceExt;
 
 pub const PROVIDER_SECRET: &str = "test-provider-secret";
@@ -45,7 +45,7 @@ pub const PAYOUT_KES_CENTS: i64 = 1_280_565;
 pub const DELIVERED_KES_STROOPS: i64 = 128_700_000_000;
 
 pub fn test_config(quote_ttl_secs: i64) -> Config {
-    let db_path = std::env::temp_dir().join(format!("satsbridge-test-{}.db", uuid::Uuid::new_v4()));
+    let db_path = std::env::temp_dir().join(format!("stellarbridge-test-{}.db", uuid::Uuid::new_v4()));
     let mut stellar = StellarConfig::simulated();
     stellar.simulated_spread_bps = 0;
     Config {

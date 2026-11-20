@@ -3,13 +3,7 @@ use std::{collections::HashMap, env, fmt::Display, net::SocketAddr, str::FromStr
 use anyhow::{Context, bail};
 use rust_decimal::Decimal;
 
-use crate::{
-    adapters::{
-        bitnob::{self, BitnobConfig},
-        stellar,
-    },
-    domain::{Currency, currency::currency_for_country},
-};
+use crate::{adapters::stellar, domain::Currency};
 
 /// Offline fallback rates (units per 1 USD, approximate, Nov 2026). Used by the `static`
 /// provider in `FX_PROVIDERS`, and by default for the simulated ledger.
@@ -195,45 +189,13 @@ pub struct PayoutConfig {
     pub mock_payouts: bool,
     /// Cap for the mock NGN rail, in kobo.
     pub ngn_max_payout_minor: i64,
-    /// Set when `BITNOB_COUNTRIES` is non-empty.
-    pub bitnob: Option<BitnobConfig>,
 }
 
 impl PayoutConfig {
-    pub fn from_env(public_base_url: Option<&str>) -> anyhow::Result<Self> {
-        let countries: Vec<String> = env::var("BITNOB_COUNTRIES")
-            .unwrap_or_default()
-            .split(',')
-            .map(|c| c.trim().to_ascii_uppercase())
-            .filter(|c| !c.is_empty())
-            .collect();
-        for country in &countries {
-            if currency_for_country(country).is_none() {
-                bail!("BITNOB_COUNTRIES: {country} is not a supported payout country");
-            }
-        }
-        let bitnob = if countries.is_empty() {
-            None
-        } else {
-            let callback_url = env::var("BITNOB_CALLBACK_URL")
-                .ok()
-                .filter(|u| !u.is_empty())
-                .or_else(|| public_base_url.map(|b| format!("{b}/api/v1/webhooks/bitnob")))
-                .context("BITNOB_CALLBACK_URL or PUBLIC_BASE_URL must be set when BITNOB_COUNTRIES is")?;
-            Some(BitnobConfig {
-                base_url: env::var("BITNOB_BASE_URL").unwrap_or_else(|_| bitnob::DEFAULT_BASE_URL.into()),
-                client_id: required("BITNOB_CLIENT_ID")?,
-                client_secret: required("BITNOB_CLIENT_SECRET")?,
-                webhook_secret: required("BITNOB_WEBHOOK_SECRET")?,
-                callback_url,
-                from_asset: env::var("BITNOB_FROM_ASSET").unwrap_or_else(|_| "USDC".into()),
-                countries,
-            })
-        };
+    pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
             mock_payouts: parse_or("MOCK_PAYOUTS", true)?,
             ngn_max_payout_minor: parse_or("NGN_MAX_PAYOUT_MINOR", 50_000_000)?,
-            bitnob,
         })
     }
 
@@ -242,7 +204,6 @@ impl PayoutConfig {
         Self {
             mock_payouts: true,
             ngn_max_payout_minor,
-            bitnob: None,
         }
     }
 }
@@ -286,8 +247,7 @@ impl RecoveryConfig {
 pub struct Config {
     pub bind_addr: SocketAddr,
     pub database_url: String,
-    /// Public https origin of this server, e.g. `https://pay.example.com`. The default base of
-    /// the webhook URL given to Bitnob.
+    /// Public https origin of this server, e.g. `https://pay.example.com`.
     pub public_base_url: Option<String>,
     /// Bearer token for `/api/v1/admin/*`; admin routes are off when unset.
     pub admin_api_key: Option<String>,
@@ -317,10 +277,10 @@ impl Config {
             .ok()
             .map(|u| u.trim().trim_end_matches('/').to_string())
             .filter(|u| !u.is_empty());
-        let payouts = PayoutConfig::from_env(public_base_url.as_deref())?;
+        let payouts = PayoutConfig::from_env()?;
         let config = Self {
             bind_addr: parse_or("BIND_ADDR", "0.0.0.0:8080".parse()?)?,
-            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://satsbridge-stellar.db".into()),
+            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://stellarbridge.db".into()),
             admin_api_key: env::var("ADMIN_API_KEY").ok().filter(|k| !k.is_empty()),
             cors_allowed_origins: env::var("CORS_ALLOWED_ORIGINS")
                 .unwrap_or_default()

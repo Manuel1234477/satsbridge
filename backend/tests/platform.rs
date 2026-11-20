@@ -9,7 +9,8 @@ use std::sync::{
 
 use axum::http::{Method, StatusCode};
 use common::*;
-use satsbridge::{
+use serde_json::{Value, json};
+use stellarbridge::{
     adapters::{
         AdapterError,
         payout::{Institution, PayoutAccepted, PayoutAdapter, PayoutRequest, ResolvedRecipient},
@@ -17,7 +18,6 @@ use satsbridge::{
     domain::{Currency, Rail, Recipient},
     services::{payments::PayoutEventStatus, recovery},
 };
-use serde_json::{Value, json};
 
 // --- auth and limits ---
 
@@ -184,7 +184,7 @@ impl PayoutAdapter for FlakyPayout {
     }
 }
 
-async fn flaky_app(flaky: Arc<FlakyPayout>, tweak: impl FnOnce(&mut satsbridge::Config)) -> TestApp {
+async fn flaky_app(flaky: Arc<FlakyPayout>, tweak: impl FnOnce(&mut stellarbridge::Config)) -> TestApp {
     build(120, move |config, payouts| {
         config.recovery.base_backoff_secs = 0;
         tweak(config);

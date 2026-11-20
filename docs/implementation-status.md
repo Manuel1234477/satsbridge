@@ -1,8 +1,8 @@
-# SatsBridge — Implementation Status
+# StellarBridge — Implementation Status
 
 **As of:** 2026-11-20
-**Scope:** backend (`backend/`) and web app (`web/`) after the move from Bitcoin/Lightning to Stellar.
-**Build:** compiles with no warnings, clippy clean. 63 backend tests pass (36 unit, 27 end-to-end), plus 2 opt-in live tests. The web app has 37 Vitest tests and 3 Playwright browser tests.
+**Scope:** backend (`backend/`) and web app (`web/`) .
+**Build:** compiles with no warnings, clippy clean. 52 backend tests pass (29 unit, 23 end-to-end), plus 1 opt-in live test. The web app has 37 Vitest tests and 3 Playwright browser tests.
 **Related docs:** [backend README](../backend/README.md) (setup, API, demo) · [web README](../web/README.md) · [demo script](demo-script.md)
 
 ---
@@ -16,8 +16,7 @@ A sender in Nigeria pays naira by bank transfer. The payment settles on **Stella
 | Stellar testnet (Horizon) | **Live, verified end to end**: accounts, trustlines, DEX offers, quotes from path finding, settle/redeem/reverse transactions, explorer links, through the API and the web UI | Settlement and FX |
 | Coinbase / CoinGecko exchange rates | Live (USD rates) | Pricing the market maker's offers; the simulated ledger |
 | NGN collection (virtual accounts) | **Mock only** | Receiving the sender's naira |
-| Bitnob | Built and tested against a fake server and the local stand-in; **never run against the real API** | Mobile money and NGN bank payouts |
-| Payout mocks (M-Pesa, mobile money, NGN bank) | Mock | Demos |
+| Payouts (M-Pesa, mobile money, NGN bank) | **Mock only** | Paying recipients; refunds |
 
 ## 2. Architecture
 
@@ -26,7 +25,7 @@ web (Next.js) ──HTTP──> api (axum)
                           ├─ services: quotes · payments (advance) · ledger · refunds · recovery
                           ├─ adapters/stellar: HorizonLedger (testnet) | SimulatedLedger
                           ├─ adapters/collection: mock NGN virtual accounts
-                          ├─ adapters/payout: Tando mock, mobile money mock, NGN mock, Bitnob
+                          ├─ adapters/payout: Tando mock, mobile money mock, NGN mock
                           └─ SQLite: quotes, payments, deposits, stellar_transactions, payouts, refunds, audit
 ```
 
@@ -86,7 +85,7 @@ Covered by end-to-end tests on the simulated ledger: Horizon timeouts after appl
 ## 6. Security
 
 - Issuer and treasury secret keys are only read from the environment; `Config` and `Keypair` are deliberately not `Debug`.
-- Webhooks: HMAC-SHA256 (`/webhooks/provider`, `/webhooks/collections`), HMAC-SHA512 (`/webhooks/bitnob`).
+- Webhooks: HMAC-SHA256 (`/webhooks/provider`, `/webhooks/collections`).
 - Users: anonymous bearer tokens, only their SHA-256 stored; other users' payments return 404.
 - Recipient and sender account details are stored in full only for execution, and returned masked.
 - Rate limits per user, per IP and on sign-up.
@@ -100,11 +99,10 @@ See [`backend/.env.example`](../backend/.env.example). Required on testnet: `STE
 
 | Suite | Count | Covers |
 |---|---|---|
-| Unit (`cargo test --lib`) | 36 | Transaction signing (verifiable signatures, hash, memo), result decoding, amounts and price approximation, DEX quotes, FX parsing and caching, state machine, keys |
-| `payment_flow` | 13 | NGN → KES end to end, failure and reversal with on-chain undo, refunds, DEX slippage, Stellar timeouts and lost transactions, expiry and late deposits, signatures, limits, Bitnob webhooks |
+| Unit (`cargo test --lib`) | 29 | Transaction signing (verifiable signatures, hash, memo), result decoding, amounts and price approximation, DEX quotes, FX parsing and caching, state machine, keys |
+| `payment_flow` | 12 | NGN → KES end to end, failure and reversal with on-chain undo, refunds, DEX slippage, Stellar timeouts and lost transactions, expiry and late deposits, signatures, limits |
 | `platform` | 11 | Auth and privacy, rate limits, payout recovery and review, admin, NGN → XAF/GNF/GHS |
-| `bitnob_sandbox` | 3 | The Bitnob adapter against the local stand-in |
-| `stellar_live`, `bitnob_live` | 2 (ignored) | Live, read-only checks |
+| `stellar_live` | 1 (ignored) | Live, read-only check against testnet |
 | Web: Vitest | 37 | Mock API contract (every response through the Zod schemas), money, status, errors |
 | Web: Playwright | 3 | Happy path, failure with reversal and refund, provider reversal (mock mode) |
 
@@ -116,5 +114,4 @@ See [`backend/.env.example`](../backend/.env.example). Required on testnet: `STE
 4. **Live market making.** Offers are re-priced only when `stellar_setup` runs. A daemon (or AMM pools) should follow the FX feed.
 5. **Deadline for settlement.** If the DEX has no path for a long time, a received deposit waits in `PAYMENT_DETECTED` (retried by recovery) rather than being refunded.
 6. **Overpayments** are flagged but the excess is not refunded automatically.
-7. **Bitnob** has never been run against the real API; no real KES provider.
-8. **Project name.** "SatsBridge" still refers to Bitcoin.
+7. **Real payout providers.** M-Pesa, mobile money and NGN bank payouts are mocks.

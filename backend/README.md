@@ -1,4 +1,4 @@
-# SatsBridge backend
+# StellarBridge backend
 
 Rust API for cross-border payments from Nigerian naira to other African currencies, settled on the [Stellar](https://stellar.org) network: [axum](https://github.com/tokio-rs/axum) 0.8, tokio, sqlx with SQLite (migrations run on startup), reqwest with rustls, and [`stellar-xdr`](https://crates.io/crates/stellar-xdr) + `ed25519-dalek` to build and sign Stellar transactions.
 
@@ -31,24 +31,22 @@ cp .env.example .env
 cargo run --bin stellar_setup   # creates the testnet accounts, trustlines and DEX liquidity;
                                 # prints STELLAR_*_SECRET lines: paste them into .env
 cargo run                       # http://localhost:8080/api/v1/health
-cargo test                      # 63 tests; no network or credentials needed
+cargo test                      # 52 tests; no network or credentials needed
 ```
 
 No network? Set `STELLAR_LEDGER=simulated`: an in-memory ledger priced from the FX feed, with the same outcome rules as the real one. Nothing reaches Stellar, and quotes say `rate_source: "simulated"`.
 
-Docker: `docker build -t satsbridge-api . && docker run -p 8080:8080 --env-file .env -v satsbridge-data:/data satsbridge-api`
+Docker: `docker build -t stellarbridge-api . && docker run -p 8080:8080 --env-file .env -v stellarbridge-data:/data stellarbridge-api`
 
-The crate builds three binaries: `satsbridge` (the API, what `cargo run` starts), `stellar_setup` ([below](#stellar-setup)) and `bitnob_sandbox`, a local stand-in for Bitnob ([below](#bitnob-local-sandbox)).
+The crate builds two binaries: `stellarbridge` (the API, what `cargo run` starts) and `stellar_setup` ([below](#stellar-setup)).
 
 ### Live checks
 
-Two opt-in tests run against real services and skip when their variables aren't set:
+An opt-in test runs against Stellar testnet and skips when the keys aren't set:
 
 ```bash
 # Read-only: issuer/treasury accounts and trustlines, then NGN -> every currency path on the DEX.
 cargo test --test stellar_live -- --ignored --nocapture
-# Read-only: Bitnob credentials, limits, bank list and field rules per BITNOB_COUNTRIES.
-cargo test --test bitnob_live -- --ignored --nocapture
 ```
 
 ## Stellar
@@ -104,35 +102,13 @@ Only a mock provider is built (`MOCK_COLLECTIONS=true`): a Paystack/Flutterwave-
 
 ## Payouts (money out)
 
-Rails are behind one trait; mocks fill in wherever no real provider is configured (`MOCK_PAYOUTS=true`):
+Rails are behind one trait (`PayoutAdapter`). Only mocks are built so far (`MOCK_PAYOUTS=true`):
 
 | Currency | Rail | Provider |
 |---|---|---|
-| KES | `KE_MOBILE_MONEY` (M-Pesa) | Tando mock, or Bitnob `KE` |
-| GHS, XOF, XAF, GNF | `MOBILE_MONEY` | mock, or Bitnob per country |
-| NGN | `NG_BANK_TRANSFER` | mock, or Bitnob `NG`. Carries **refunds** to senders |
-
-### Bitnob
-
-Enabled by listing countries in `BITNOB_COUNTRIES`: `NG` is a Naira bank transfer, and `KE`, `GH`, `SN`, `CI`, `CM` and others are mobile money. Each country is checked against Bitnob at startup (limits and beneficiary field rules).
-
-- **Payout:** quote → initialize → **finalize (irreversible)**, debited from your pre-funded Bitnob balance in `BITNOB_FROM_ASSET` (fund it with USDC from the treasury in production).
-- **Status:** `POST /webhooks/bitnob`, HMAC-SHA512 in `x-bitnob-signature`. `BITNOB_CALLBACK_URL` (or `PUBLIC_BASE_URL`) must be publicly reachable.
-- **Retries:** each attempt uses its own reference (`{payment_id}`, `{payment_id}-r2`, ...) so reconciliation finds every attempt.
-
-#### Bitnob local sandbox
-
-`bitnob_sandbox` answers the Bitnob endpoints SatsBridge uses, verifies the same request signatures, and sends signed webhooks. It proves our side of the integration, not Bitnob's behaviour.
-
-```bash
-cargo run --bin bitnob_sandbox            # http://127.0.0.1:9100
-# .env for the API, with the same BITNOB_CLIENT_ID/SECRET/WEBHOOK_SECRET as the stand-in:
-BITNOB_BASE_URL=http://127.0.0.1:9100
-BITNOB_COUNTRIES=KE
-PUBLIC_BASE_URL=http://127.0.0.1:8080
-```
-
-An account number ending in `9999` makes a stand-in payout expire (exercises the refund path). Settings: `SANDBOX_BIND`, `SANDBOX_AUTO_COMPLETE_SECS` (default 3), `SANDBOX_BALANCE_SATS`.
+| KES | `KE_MOBILE_MONEY` (M-Pesa) | Tando mock |
+| GHS, XOF, XAF, GNF | `MOBILE_MONEY` | mock |
+| NGN | `NG_BANK_TRANSFER` | mock. Carries **refunds** to senders |
 
 ## Refunds
 
@@ -169,7 +145,6 @@ Every variable is documented in [`.env.example`](.env.example). The main ones:
 | `MOCK_COLLECTIONS`, `NGN_MAX_DEPOSIT_MINOR` | Mock NGN collection rail and its cap (kobo) | `true`, ₦5M |
 | `PROVIDER_WEBHOOK_SECRET` | HMAC secret for `/webhooks/provider` and `/webhooks/collections` | **required** |
 | `MOCK_PAYOUTS`, `NGN_MAX_PAYOUT_MINOR` | Mock payout rails; cap on the mock NGN rail | `true`, ₦500k |
-| `BITNOB_*` | Bitnob corridors and credentials | off |
 | `ADMIN_API_KEY` | Bearer token for `/admin/*`; disabled when empty | — |
 | `CORS_ALLOWED_ORIGINS` | Browser origins allowed to call the API | none |
 | `FX_PROVIDERS` | Reference rates for `stellar_setup` and the simulated ledger | `coinbase,coingecko,static` |
@@ -180,7 +155,7 @@ Every variable is documented in [`.env.example`](.env.example). The main ones:
 - **Amounts** are integers in minor units. `GET /currencies` gives each currency's `exponent`: XOF/XAF/GNF = 0, KES/NGN/GHS = 2. Stellar amounts (`delivered`, `operation.*`) are in stroops (7 decimals).
 - **Errors** are `{"error": {"code", "message"}}`. Codes: `validation_error` 400, `unauthorized` 401, `invalid_signature` 401, `not_found` 404, `conflict` 409, `quote_expired` 410, `invalid_recipient` and `recipient_not_found` 422, `rate_limited` 429, `provider_unavailable` 503, `provider_rejected` 502, `internal_error` 500.
 - **Exactly one payout per payment:** webhook events are deduplicated, a status changes only if it is still in the expected state, one payout row per payment, and submission attempts are claimed atomically.
-- **Webhook authentication:** `/webhooks/provider` and `/webhooks/collections` use `X-SatsBridge-Signature: <hex HMAC-SHA256 of raw body>`; `/webhooks/bitnob` uses Bitnob's HMAC-SHA512.
+- **Webhook authentication:** `/webhooks/provider` and `/webhooks/collections` use `X-StellarBridge-Signature: <hex HMAC-SHA256 of raw body>`.
 - **Personal data:** full recipient and sender account details are never returned. Account numbers are masked.
 
 ## Authentication
@@ -205,7 +180,6 @@ Every variable is documented in [`.env.example`](.env.example). The main ones:
 | GET | `/transactions?limit=50` | user | The caller's recent payments |
 | POST | `/webhooks/collections` | HMAC | Deposit reported by the collection provider |
 | POST | `/webhooks/provider` | HMAC | `{event_id, provider_reference, status: success\|failed\|reversed, reason?}` for payouts and refunds |
-| POST | `/webhooks/bitnob` | HMAC-SHA512 | Bitnob payout callbacks |
 | POST | `/dev/payments/{id}/deposit` | user | Dev only: `{amount_minor?, sender?}` simulates the bank transfer (mock collections) |
 | POST | `/dev/payments/{id}/payout`, `/refund` | user | Dev only: `{status}` simulates a **mock** provider's callback |
 | GET | `/admin/summary` | admin | Counts, corridors, completion rate, timings, ledger, treasury, rails |
@@ -254,15 +228,13 @@ src/
     stellar/    trait, keys, transaction building/signing (XDR), Horizon client + ledger, simulated ledger
     collection/ trait + registry, mock NGN virtual accounts
     payout/     trait + registry, ngn_mock, tando_mock, mobile_money_mock
-    bitnob/     signed client, payout adapter (bank + mobile money)
     fx/         coinbase, coingecko, static; cache + fallback chain (USD rates)
   domain/       Currency, money units, PaymentStatus state machine, Recipient and Rail
   db.rs         models and queries; `transition()` is the only way a status changes
   bin/stellar_setup.rs    testnet accounts, trustlines and DEX liquidity
-  bin/bitnob_sandbox.rs   local stand-in for Bitnob
 migrations/     SQLite schema
-tests/          end-to-end flows through the router on the simulated ledger, the Bitnob sandbox,
-                and opt-in live tests (Stellar testnet, Bitnob)
+tests/          end-to-end flows through the router on the simulated ledger, and an opt-in
+                live test against Stellar testnet
 ```
 
 ## Not done yet
@@ -272,4 +244,4 @@ tests/          end-to-end flows through the router on the simulated ledger, the
 - **Throughput.** One treasury account means one transaction per ledger. Channel accounts would allow parallel submission.
 - **Market making.** Offers are re-priced only when `stellar_setup` runs. A live market maker (or a liquidity pool) should follow the FX feed.
 - **Mainnet.** Testnet only; the config refuses any other network passphrase.
-- **Bitnob live verification** and a real KES provider, as before.
+- **Real payout providers.** M-Pesa, mobile money and NGN bank payouts are mocks; real providers (or SEP-31 anchors) plug in behind `PayoutAdapter`.

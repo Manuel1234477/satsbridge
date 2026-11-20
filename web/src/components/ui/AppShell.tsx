@@ -8,7 +8,7 @@ import { LogoMark } from './LogoMark';
 import { Sheet } from './Sheet';
 
 export type ThemeChoice = 'dark' | 'light' | 'system';
-const THEME_KEY = 'satsbridge.theme';
+const THEME_KEY = 'stellarbridge.theme';
 
 function readTheme(): ThemeChoice {
   try {
@@ -85,7 +85,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : (
               <Link href="/" className="flex items-center gap-2.5 text-[17px] font-semibold tracking-tight text-[var(--text)] no-underline">
                 <LogoMark size={30} />
-                SatsBridge
+                StellarBridge
               </Link>
             )}
             <nav className="topnav" aria-label="Primary">

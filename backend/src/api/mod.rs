@@ -61,8 +61,7 @@ pub fn router(state: AppState) -> Router {
     // Signed or verified by their own mechanism; not rate limited so provider retries get through.
     let webhooks = Router::new()
         .route("/webhooks/provider", post(webhooks::provider))
-        .route("/webhooks/collections", post(webhooks::collections))
-        .route("/webhooks/bitnob", post(webhooks::bitnob));
+        .route("/webhooks/collections", post(webhooks::collections));
 
     let mut api = user.merge(signup).merge(public).merge(webhooks);
     if state.config.admin_api_key.is_some() {

@@ -179,7 +179,7 @@ pub async fn submit(state: &AppState, refund: &Refund, adapter: &dyn PayoutAdapt
         account_name: refund.account_name.as_deref(),
         amount_minor: refund.amount,
         currency: refund.currency,
-        narration: format!("SatsBridge refund {id}"),
+        narration: format!("StellarBridge refund {id}"),
     };
     match adapter.create_payout(request).await {
         Ok(accepted) => {

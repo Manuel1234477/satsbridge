@@ -1,4 +1,4 @@
-//! Stand-in for an NGN payout provider over NIBSS NIP (docs/prd-addendum-ngn-payout.md).
+//! Stand-in for an NGN payout provider over NIBSS NIP (instant interbank transfers).
 //!
 //! Demo behaviour: account `0000000000` does not resolve; every other valid NUBAN at a listed
 //! institution resolves to `DEMO RECIPIENT <last4>`.

@@ -15,7 +15,7 @@
 
 import type { Currency, Rail } from './schemas';
 
-const STORAGE_KEY = 'satsbridge.mock.v2';
+const STORAGE_KEY = 'stellarbridge.mock.v2';
 const TIME_SCALE = Math.max(0.01, Number(process.env.NEXT_PUBLIC_MOCK_TIME_SCALE ?? '1') || 1);
 const LATENCY_MS = 250 * TIME_SCALE;
 
@@ -384,7 +384,7 @@ function depositView(p: MockPayment, d: Derived) {
     reference: p.deposit.accountNumber,
     bank_name: 'Sandbox Microfinance Bank',
     account_number: p.deposit.accountNumber,
-    account_name: `SATSBRIDGE / ${p.deposit.accountNumber.slice(4)}`,
+    account_name: `STELLARBRIDGE / ${p.deposit.accountNumber.slice(4)}`,
     status: d.depositStatus,
     received_amount: d.receivedAtMs !== null ? p.source_amount : null,
     expires_at: iso(p.deposit.expiresAtMs),

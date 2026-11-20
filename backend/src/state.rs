@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, str::FromStr, sync::Arc, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use sqlx::{
     SqlitePool,
@@ -7,7 +7,6 @@ use sqlx::{
 
 use crate::{
     adapters::{
-        bitnob::{BitnobClient, payout::BitnobPayoutAdapter},
         collection::{CollectionRegistry, mock::MockNgnCollection},
         fx::{CachedFx, CoinGeckoSource, CoinbaseSource, FallbackFx, FxProvider, StaticFxProvider},
         payout::{
@@ -21,7 +20,7 @@ use crate::{
         },
     },
     config::{CollectionConfig, Config, FxConfig, FxProviderKind, LedgerKind, PayoutConfig, StellarConfig},
-    domain::{Currency, Rail, currency::currency_for_country},
+    domain::{Currency, Rail},
     ratelimit::RateLimits,
 };
 
@@ -59,7 +58,7 @@ impl AppState {
         }
     }
 
-    /// Wires adapters from config and checks the Stellar accounts and Bitnob credentials.
+    /// Wires adapters from config and checks the Stellar accounts.
     pub async fn from_config(config: Config) -> anyhow::Result<Self> {
         let pool = connect(&config.database_url).await?;
         let fx = build_fx(&config.fx)?;
@@ -87,7 +86,7 @@ pub async fn connect(database_url: &str) -> anyhow::Result<SqlitePool> {
 pub fn http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .timeout(timeout)
-        .user_agent(concat!("satsbridge/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("stellarbridge/", env!("CARGO_PKG_VERSION")))
         .build()?)
 }
 
@@ -165,48 +164,9 @@ pub fn build_collections(cfg: &CollectionConfig) -> CollectionRegistry {
     collections
 }
 
-/// Builds the payout rails. Bitnob corridors are checked against Bitnob at startup (credentials,
-/// limits, field rules); mocks fill in where no real provider serves a currency and rail.
+/// Builds the payout rails: mocks for every currency until real providers are added.
 pub async fn build_payouts(cfg: &PayoutConfig) -> anyhow::Result<PayoutRegistry> {
     let mut payouts = PayoutRegistry::default();
-
-    if let Some(bitnob) = &cfg.bitnob {
-        let client = Arc::new(BitnobClient::new(http_client(Duration::from_secs(15))?, bitnob.clone()));
-        let fail = |e| anyhow::anyhow!("cannot use Bitnob at {}: {e}", bitnob.base_url);
-        let identity = client.whoami().await.map_err(fail)?;
-        tracing::info!(
-            workspace = %identity.client_name.as_deref().unwrap_or("?"),
-            environment = %identity.environment.as_deref().unwrap_or("?"),
-            countries = ?bitnob.countries,
-            "connected to Bitnob"
-        );
-        if identity.environment.as_deref() == Some("production") {
-            tracing::warn!("Bitnob keys are PRODUCTION: payouts send real money");
-        }
-        let limits = client.limits().await.map_err(fail)?;
-
-        let mut corridors: BTreeMap<(Currency, &'static str), (Rail, Vec<String>)> = BTreeMap::new();
-        for country in &bitnob.countries {
-            let currency = currency_for_country(country).expect("validated in config");
-            let rail = if country == "NG" {
-                Rail::NgBankTransfer
-            } else {
-                Rail::MobileMoney
-            };
-            corridors
-                .entry((currency, rail.as_str()))
-                .or_insert((rail, Vec::new()))
-                .1
-                .push(country.clone());
-        }
-        for ((currency, _), (rail, countries)) in corridors {
-            let adapter = BitnobPayoutAdapter::connect(client.clone(), currency, rail, &countries, &limits)
-                .await
-                .map_err(fail)?;
-            payouts.register(Arc::new(adapter));
-        }
-    }
-
     if cfg.mock_payouts {
         if payouts.get(Currency::Ngn, Rail::NgBankTransfer).is_none() {
             payouts.register(Arc::new(MockNgnAdapter::new(cfg.ngn_max_payout_minor)));

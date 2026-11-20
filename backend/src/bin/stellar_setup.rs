@@ -1,4 +1,4 @@
-//! Sets up (or refreshes) everything SatsBridge needs on Stellar testnet:
+//! Sets up (or refreshes) everything StellarBridge needs on Stellar testnet:
 //!
 //! 1. Three accounts, funded by friendbot: the **issuer** (issues `NGN`, `KES`, `GHS`, `XOF`,
 //!    `XAF`, `GNF` and the `USD` bridge token), the **treasury** (holds tokens while a payment
@@ -25,7 +25,7 @@ use std::{env, time::Duration};
 use anyhow::{Context, bail};
 use chrono::Utc;
 use rust_decimal::{Decimal, prelude::ToPrimitive};
-use satsbridge::{
+use stellarbridge::{
     adapters::stellar::{
         STROOPS_PER_UNIT, StellarAsset, TESTNET_FRIENDBOT, TESTNET_HORIZON, TESTNET_PASSPHRASE, TxOutcome,
         horizon::HorizonClient,
@@ -83,7 +83,7 @@ impl Setup {
                 TESTNET_PASSPHRASE,
                 &source.public_key(),
                 account.sequence + 1,
-                "satsbridge setup",
+                "stellarbridge setup",
                 (Utc::now().timestamp() + 120) as u64,
                 chunk,
                 signers,

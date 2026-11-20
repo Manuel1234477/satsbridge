@@ -1,4 +1,4 @@
-# SatsBridge demo script: naira to Kenyan shillings in 3 minutes
+# StellarBridge demo script: naira to Kenyan shillings in 3 minutes
 
 Written for: the presenter and one judge watching the screen.
 

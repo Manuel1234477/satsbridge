@@ -1,5 +1,5 @@
 //! Offline stand-in for mobile money payouts (XOF, XAF, GNF, GHS), so those corridors can be demoed
-//! without Bitnob. Accepts 8-12 digit numbers; uses the given name or a demo one.
+//! without a real provider. Accepts 8-12 digit numbers; uses the given name or a demo one.
 
 use async_trait::async_trait;
 

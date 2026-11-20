@@ -1,13 +1,15 @@
 use std::{net::SocketAddr, time::Duration};
 
-use satsbridge::{AppState, Config, router, services};
+use stellarbridge::{AppState, Config, router, services};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "satsbridge=info,tower_http=info".into()))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| "stellarbridge=info,tower_http=info".into()),
+        )
         .init();
 
     let config = Config::from_env()?;
@@ -24,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
         services::recovery::spawn_worker(state.clone(), Duration::from_secs(state.config.recovery.poll_secs));
     }
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    tracing::info!(%bind_addr, ledger = state.ledger.name(), "SatsBridge API listening");
+    tracing::info!(%bind_addr, ledger = state.ledger.name(), "StellarBridge API listening");
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),

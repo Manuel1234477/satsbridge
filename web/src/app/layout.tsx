@@ -7,7 +7,7 @@ import { AppShell } from '@/components/ui/AppShell';
 const sans = Inter_Tight({ subsets: ['latin'], variable: '--font-sans', display: 'swap' });
 
 export const metadata: Metadata = {
-  title: 'SatsBridge · Send across Africa',
+  title: 'StellarBridge · Send across Africa',
   description: 'Pay in naira, deliver Kenyan shillings, cedis, CFA francs and more, settled on Stellar. Sandbox demo, no real money moves.',
 };
 

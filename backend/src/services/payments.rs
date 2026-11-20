@@ -659,7 +659,7 @@ pub async fn submit_payout(
         account_name: payment.recipient_name.as_deref(),
         amount_minor: payment.expected_payout,
         currency: payment.destination_currency,
-        narration: format!("SatsBridge {}", payment.id),
+        narration: format!("StellarBridge {}", payment.id),
     };
     match adapter.create_payout(request).await {
         Ok(accepted) => record_accepted(state, &payment.id, &accepted).await?,
@@ -756,7 +756,7 @@ pub async fn handle_payout_event(state: &AppState, event: PayoutEvent) -> AppRes
             ok
         }
         PayoutEventStatus::Reversed => {
-            // NGN addendum A.6: a reversal after success re-opens the payment for refund.
+            // A reversal after success re-opens the payment for refund.
             let reason = event.reason.as_deref().unwrap_or("payout reversed by provider");
             let ok = fail_to_refund(&mut tx, id, PaymentStatus::Completed, "payout.reversed", reason).await?;
             if ok {
