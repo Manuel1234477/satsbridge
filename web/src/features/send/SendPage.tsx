@@ -22,7 +22,7 @@ import type { CreateQuoteInput } from '@/lib/api';
 import type { CurrencyInfo, Currency, Quote, Rail } from '@/lib/api/schemas';
 import { formatMinor, parseMinor, toInputText } from '@/lib/money';
 import { RAIL_LABELS } from '@/lib/rails';
-import { receivableCurrencies } from '@/lib/currencies';
+import { receivableCurrencies, sendableCurrencies } from '@/lib/currencies';
 
 export interface SendPrefill {
   sourceCurrency: Currency;
@@ -36,8 +36,8 @@ interface SendPageProps {
   onContinue: (quote: Quote, rail: Rail) => void;
 }
 
-const DEFAULT_SOURCE: Currency = 'XOF';
-const DEFAULT_DESTINATION: Currency = 'NGN';
+const DEFAULT_SOURCE: Currency = 'NGN';
+const DEFAULT_DESTINATION: Currency = 'KES';
 
 export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
   const [sourceCode, setSourceCode] = useState<Currency>(prefill?.sourceCurrency ?? DEFAULT_SOURCE);
@@ -90,7 +90,8 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
   }, [refetchQuote]);
 
 
-  const canSwap = (sourceInfo?.payout_rails.length ?? 0) > 0;
+  // Only currencies with a collection rail can be sent, so swapping needs both sides sendable.
+  const canSwap = (sourceInfo?.payout_rails.length ?? 0) > 0 && destinationInfo?.can_send === true;
   const swap = () => {
     if (!canSwap) return;
     setSourceCode(destinationCode);
@@ -271,7 +272,7 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
         open={sheet === 'source'}
         onClose={() => setSheet(null)}
         title="Send currency"
-        currencies={currencies}
+        currencies={sendableCurrencies(currencies)}
         selected={sourceCode}
         onSelect={(code) => {
           setSourceCode(code as Currency);
@@ -282,7 +283,7 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
         open={sheet === 'destination'}
         onClose={() => setSheet(null)}
         title="Receive currency"
-        currencies={receivableCurrencies(currencies)}
+        currencies={receivableCurrencies(currencies).filter((c) => c.code !== sourceCode)}
         selected={destinationCode}
         onSelect={(code) => {
           setDestinationCode(code as Currency);
@@ -291,7 +292,9 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
       />
       <Sheet open={sheet === 'help'} onClose={() => setSheet(null)} title="How this works">
         <p className="label">
-          Enter an amount and check the live rate. Confirm the recipient, then pay one Lightning invoice. The recipient is paid in their own currency.
+          Enter an amount in naira and check the live rate. Confirm the recipient, then make one bank transfer to the account number we give you. We settle
+          the conversion on the Stellar network and pay the recipient in their own currency, by mobile money or bank. If anything fails, your naira comes
+          back to the account you paid from.
         </p>
         <p className="label">Sandbox: no real money is moved.</p>
       </Sheet>

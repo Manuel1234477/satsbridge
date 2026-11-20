@@ -11,15 +11,17 @@ pub enum Currency {
     Gnf,
     Kes,
     Ngn,
+    Ghs,
 }
 
 impl Currency {
-    pub const ALL: [Currency; 5] = [
+    pub const ALL: [Currency; 6] = [
         Currency::Xof,
         Currency::Xaf,
         Currency::Gnf,
         Currency::Kes,
         Currency::Ngn,
+        Currency::Ghs,
     ];
 
     pub fn code(self) -> &'static str {
@@ -29,6 +31,7 @@ impl Currency {
             Currency::Gnf => "GNF",
             Currency::Kes => "KES",
             Currency::Ngn => "NGN",
+            Currency::Ghs => "GHS",
         }
     }
 
@@ -39,6 +42,7 @@ impl Currency {
             Currency::Gnf => "Guinean franc",
             Currency::Kes => "Kenyan shilling",
             Currency::Ngn => "Nigerian naira",
+            Currency::Ghs => "Ghanaian cedi",
         }
     }
 
@@ -46,7 +50,7 @@ impl Currency {
     pub fn exponent(self) -> u32 {
         match self {
             Currency::Xof | Currency::Xaf | Currency::Gnf => 0,
-            Currency::Kes | Currency::Ngn => 2,
+            Currency::Kes | Currency::Ngn | Currency::Ghs => 2,
         }
     }
 }
@@ -57,6 +61,7 @@ pub fn currency_for_country(country: &str) -> Option<Currency> {
         "NG" => Some(Currency::Ngn),
         "KE" => Some(Currency::Kes),
         "GN" => Some(Currency::Gnf),
+        "GH" => Some(Currency::Ghs),
         // UEMOA
         "BJ" | "BF" | "CI" | "GW" | "ML" | "NE" | "SN" | "TG" => Some(Currency::Xof),
         // CEMAC

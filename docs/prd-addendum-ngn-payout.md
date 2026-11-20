@@ -1,7 +1,7 @@
 # PRD Addendum A — Nigerian Naira (NGN) Payout
 
 **Applies to:** SatsBridge PRD v1.0
-**Status:** Proposed
+**Status:** Superseded (2026-11). SatsBridge now settles on Stellar with NGN as the **source** currency, collected by bank transfer. The NGN payout rail described here is kept, and now carries refunds to senders. The Lightning parts below are historical.
 **Scope:** Add NGN as a destination (payout) currency. NGN is also supported as a source currency (a sender paying in Naira); the quote engine treats every currency as a valid source.
 
 ## A.1 Summary

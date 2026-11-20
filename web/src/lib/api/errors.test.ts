@@ -24,10 +24,10 @@ describe('API error mapping', () => {
   });
 
   it('keeps the code, status and server detail on the error', () => {
-    const error = createApiError('validation_error', 400, 'the refund invoice must be for exactly 5 sats');
+    const error = createApiError('validation_error', 400, 'amount is too small to cover fees');
     expect(error.code).toBe('validation_error');
     expect(error.statusCode).toBe(400);
-    expect(error.detail).toBe('the refund invoice must be for exactly 5 sats');
+    expect(error.detail).toBe('amount is too small to cover fees');
     expect(error.message).toBe(getErrorMessage('validation_error'));
   });
 

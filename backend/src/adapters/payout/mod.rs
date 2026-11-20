@@ -9,7 +9,6 @@ use crate::{
     services::payments::PayoutEventStatus,
 };
 
-pub mod lightning_address;
 pub mod mobile_money_mock;
 pub mod ngn_mock;
 pub mod tando_mock;
@@ -32,9 +31,6 @@ pub struct Institution {
 #[derive(Debug, Default)]
 pub struct ResolvedRecipient {
     pub account_name: Option<String>,
-    /// Amount bounds the destination itself accepts (e.g. LNURL min/maxSendable).
-    pub min_sats: Option<i64>,
-    pub max_sats: Option<i64>,
     /// Destination-amount limits for this recipient's country, where they differ by country.
     pub min_minor: Option<i64>,
     pub max_minor: Option<i64>,
@@ -50,16 +46,14 @@ pub struct PayoutRequest<'a> {
     pub account_name: Option<&'a str>,
     /// Destination amount in minor units, as quoted.
     pub amount_minor: i64,
-    /// Sats available for this payout after SatsBridge's fee.
-    pub amount_sats: i64,
     pub currency: Currency,
     pub narration: String,
 }
 
 pub struct PayoutAccepted {
     pub provider_reference: String,
-    /// True when the rail confirms delivery synchronously (e.g. a settled Lightning payment);
-    /// otherwise completion arrives via a provider webhook.
+    /// True when the rail confirms delivery synchronously; otherwise completion arrives via a
+    /// provider webhook.
     pub completed: bool,
 }
 
@@ -135,11 +129,10 @@ impl PayoutRegistry {
             .map(|(_, a)| a)
     }
 
-    /// The rail used when a quote doesn't name one: bank/mobile money before Lightning Address,
-    /// real providers before mocks.
+    /// The rail used when a quote doesn't name one: real providers before mocks.
     pub fn default_for(&self, currency: Currency) -> Option<&Arc<dyn PayoutAdapter>> {
         let mut adapters: Vec<_> = self.for_currency(currency).collect();
-        adapters.sort_by_key(|a| (a.rail() == Rail::LightningAddress, a.provider().ends_with("-mock")));
+        adapters.sort_by_key(|a| a.provider().ends_with("-mock"));
         adapters.into_iter().next()
     }
 }

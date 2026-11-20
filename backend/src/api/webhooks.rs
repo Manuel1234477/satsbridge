@@ -3,13 +3,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::{
-    adapters::{bitnob, lightning::lnbits},
+    adapters::bitnob,
     error::{AppError, AppResult},
     security::{SIGNATURE_HEADER, verify_hmac_sha512, verify_signature},
-    services::{
-        payments::{self, WebhookOutcome},
-        settlement,
-    },
+    services::payments::{self, WebhookOutcome},
     state::AppState,
 };
 
@@ -30,6 +27,12 @@ pub async fn provider(State(state): State<AppState>, headers: HeaderMap, body: B
     Ok(ack(payments::handle_payout_event(&state, event).await?))
 }
 
+/// Bank-transfer deposits from the collection provider, signed like `/webhooks/provider`.
+pub async fn collections(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> AppResult<Json<Value>> {
+    let event = verified_body(&state.config.provider_webhook_secret, &headers, &body)?;
+    Ok(ack(payments::handle_deposit(&state, event).await?))
+}
+
 /// Bitnob payout callbacks: HMAC-SHA512 of the raw body in `x-bitnob-signature`.
 /// Non-2xx responses are retried by Bitnob, which covers events that arrive before we have
 /// stored the payout reference.
@@ -48,12 +51,4 @@ pub async fn bitnob(State(state): State<AppState>, headers: HeaderMap, body: Byt
         Some(event) => Ok(ack(payments::handle_payout_event(&state, event).await?)),
         None => Ok(ack(WebhookOutcome::Ignored)),
     }
-}
-
-/// LNbits invoice webhook. Unsigned, so the body only tells us which invoice to re-check;
-/// settlement is confirmed with LNbits before anything changes.
-pub async fn lnbits(State(state): State<AppState>, body: Bytes) -> AppResult<Json<Value>> {
-    let payment_hash = lnbits::webhook_payment_hash(&body)
-        .ok_or_else(|| AppError::Validation("webhook body has no valid payment_hash".into()))?;
-    Ok(ack(settlement::confirm_settlement(&state, &payment_hash).await?))
 }

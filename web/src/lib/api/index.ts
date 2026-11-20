@@ -1,22 +1,24 @@
 import { apiRequest } from './client';
 import {
   CurrencyInfoSchema,
+  DepositSchema,
   DevPayoutOutcomeSchema,
-  PayResponseSchema,
   PaymentDetailsSchema,
   PaymentIntentSchema,
   PayoutInstitutionSchema,
   QuoteSchema,
   RecipientResolutionSchema,
+  RefundSchema,
   type AmountSide,
   type CurrencyInfo,
+  type Deposit,
   type PayoutInstitution,
-  type PayResponse,
   type PaymentDetails,
   type PaymentIntent,
   type Quote,
   type Recipient,
   type RecipientResolution,
+  type Refund,
   type Currency,
   type Rail,
 } from './schemas';
@@ -85,13 +87,14 @@ export function createPayment(input: { quote_id: string; recipient: Recipient })
   });
 }
 
-export function payPayment(id: string): Promise<PayResponse> {
+// Bank transfer instructions for the payment; created on the first call, the same afterwards.
+export function payPayment(id: string): Promise<Deposit> {
   return apiRequest({
     method: 'POST',
     path: `/payments/${encodeURIComponent(id)}/pay`,
     body: {},
     auth: true,
-    schema: PayResponseSchema,
+    schema: DepositSchema,
   });
 }
 
@@ -104,13 +107,21 @@ export function getPayment(id: string): Promise<PaymentDetails> {
   });
 }
 
-export function refundPayment(id: string, paymentRequest: string): Promise<PaymentIntent> {
+export interface RefundDestination {
+  bank_code: string;
+  account_number: string;
+  resolution_id: string;
+}
+
+// Refund to a verified NGN bank account (the account the transfer came from is used automatically
+// when the bank reports it).
+export function refundPayment(id: string, destination: RefundDestination): Promise<Refund> {
   return apiRequest({
     method: 'POST',
     path: `/payments/${encodeURIComponent(id)}/refund`,
-    body: { payment_request: paymentRequest },
+    body: destination,
     auth: true,
-    schema: PaymentIntentSchema,
+    schema: RefundSchema,
   });
 }
 
@@ -133,4 +144,25 @@ export function simulatePayout(id: string, status: 'success' | 'failed' | 'rever
   });
 }
 
-export type { PaymentDetails, PaymentIntent, PayResponse, Quote, RecipientResolution, PayoutInstitution, CurrencyInfo };
+// Dev only (mock collection rail): the sender's bank transfer arrives.
+export function simulateDeposit(id: string): Promise<{ outcome: string }> {
+  return apiRequest({
+    method: 'POST',
+    path: `/dev/payments/${encodeURIComponent(id)}/deposit`,
+    body: {},
+    auth: true,
+    schema: DevPayoutOutcomeSchema,
+  });
+}
+
+export function simulateRefund(id: string, status: 'success' | 'failed'): Promise<{ outcome: string }> {
+  return apiRequest({
+    method: 'POST',
+    path: `/dev/payments/${encodeURIComponent(id)}/refund`,
+    body: { status },
+    auth: true,
+    schema: DevPayoutOutcomeSchema,
+  });
+}
+
+export type { Deposit, PaymentDetails, PaymentIntent, Quote, Refund, RecipientResolution, PayoutInstitution, CurrencyInfo };

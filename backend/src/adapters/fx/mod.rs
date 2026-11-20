@@ -1,7 +1,8 @@
-//! BTC price feeds. Live sources are wrapped in [`CachedFx`] and chained with [`FallbackFx`].
+//! Reference FX rates: units of each currency per 1 US dollar. Live sources are wrapped in
+//! [`CachedFx`] and chained with [`FallbackFx`].
 //!
-//! These are reference rates (BTC/USD or BTC/EUR crossed with fiat FX), not executable prices.
-//! Once a real off-ramp is connected, the destination leg should come from that provider's quote.
+//! These are mid-market reference rates, not executable prices. Quotes come from the Stellar DEX;
+//! these rates price the market maker's offers (`stellar_setup`) and the simulated ledger.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -28,8 +29,8 @@ pub fn cfa_per_eur() -> Decimal {
 
 #[derive(Clone, Debug)]
 pub struct FxPrice {
-    /// Major units of the currency per 1 BTC.
-    pub price: Decimal,
+    /// Major units of the currency per 1 USD.
+    pub rate: Decimal,
     /// Recorded on the quote so the rate used is auditable.
     pub source: String,
     pub as_of: DateTime<Utc>,
@@ -39,7 +40,7 @@ pub struct FxPrice {
 pub trait FxProvider: Send + Sync {
     fn name(&self) -> &'static str;
 
-    async fn btc_price(&self, currency: Currency) -> Result<FxPrice, AdapterError>;
+    async fn usd_rate(&self, currency: Currency) -> Result<FxPrice, AdapterError>;
 }
 
 /// An upstream API that returns every price it supports in one request.
@@ -50,9 +51,9 @@ pub trait PriceSource: Send + Sync {
     async fn fetch(&self) -> Result<HashMap<Currency, Decimal>, AdapterError>;
 }
 
-/// Adds the CFA franc prices derived from BTC/EUR.
-pub fn insert_cfa_from_eur(prices: &mut HashMap<Currency, Decimal>, btc_eur: Option<Decimal>) {
-    if let Some(eur) = btc_eur {
+/// Adds the CFA franc rates derived from the euro rate (EUR per USD).
+pub fn insert_cfa_from_eur(prices: &mut HashMap<Currency, Decimal>, eur: Option<Decimal>) {
+    if let Some(eur) = eur {
         prices.insert(Currency::Xof, eur * cfa_per_eur());
         prices.insert(Currency::Xaf, eur * cfa_per_eur());
     }
@@ -102,7 +103,7 @@ impl<S: PriceSource> FxProvider for CachedFx<S> {
         self.source.name()
     }
 
-    async fn btc_price(&self, currency: Currency) -> Result<FxPrice, AdapterError> {
+    async fn usd_rate(&self, currency: Currency) -> Result<FxPrice, AdapterError> {
         let name = self.source.name();
         // Held across the fetch so concurrent quotes share one upstream request.
         let mut state = self.state.lock().await;
@@ -116,25 +117,25 @@ impl<S: PriceSource> FxProvider for CachedFx<S> {
                     state.prices = prices;
                     state.fetched_at = Some(now);
                 }
-                Err(err) => tracing::warn!(source = name, error = %err, "BTC price refresh failed"),
+                Err(err) => tracing::warn!(source = name, error = %err, "FX rate refresh failed"),
             }
         }
 
         if !within(state.fetched_at, self.max_age) {
             return Err(AdapterError::Unavailable(format!(
-                "{name} prices are unavailable or stale"
+                "{name} rates are unavailable or stale"
             )));
         }
         let as_of = state.fetched_at.expect("checked by within()");
         state
             .prices
             .get(&currency)
-            .map(|&price| FxPrice {
-                price,
+            .map(|&rate| FxPrice {
+                rate,
                 source: name.to_string(),
                 as_of,
             })
-            .ok_or_else(|| AdapterError::Unavailable(format!("{name} has no BTC price for {currency}")))
+            .ok_or_else(|| AdapterError::Unavailable(format!("{name} has no USD rate for {currency}")))
     }
 }
 
@@ -155,10 +156,10 @@ impl FxProvider for FallbackFx {
         "fallback"
     }
 
-    async fn btc_price(&self, currency: Currency) -> Result<FxPrice, AdapterError> {
+    async fn usd_rate(&self, currency: Currency) -> Result<FxPrice, AdapterError> {
         let mut last_err = None;
         for provider in &self.providers {
-            match provider.btc_price(currency).await {
+            match provider.usd_rate(currency).await {
                 Ok(price) => return Ok(price),
                 Err(err) => {
                     tracing::warn!(provider = provider.name(), %currency, error = %err, "FX provider failed; trying next");
@@ -192,7 +193,7 @@ mod tests {
             if n >= self.fail_after {
                 return Err(AdapterError::Unavailable("down".into()));
             }
-            Ok(HashMap::from([(Currency::Ngn, Decimal::from(110_000_000))]))
+            Ok(HashMap::from([(Currency::Ngn, Decimal::from(1_550))]))
         }
     }
 
@@ -206,24 +207,24 @@ mod tests {
     #[tokio::test]
     async fn caches_within_ttl() {
         let fx = CachedFx::new(fake(10), Duration::seconds(60), Duration::seconds(300));
-        fx.btc_price(Currency::Ngn).await.unwrap();
-        fx.btc_price(Currency::Ngn).await.unwrap();
+        fx.usd_rate(Currency::Ngn).await.unwrap();
+        fx.usd_rate(Currency::Ngn).await.unwrap();
         assert_eq!(fx.source.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn serves_last_good_prices_while_upstream_fails() {
         let fx = CachedFx::new(fake(1), Duration::zero(), Duration::seconds(300));
-        fx.btc_price(Currency::Ngn).await.unwrap();
-        let price = fx.btc_price(Currency::Ngn).await.unwrap();
-        assert_eq!(price.price, Decimal::from(110_000_000));
+        fx.usd_rate(Currency::Ngn).await.unwrap();
+        let price = fx.usd_rate(Currency::Ngn).await.unwrap();
+        assert_eq!(price.rate, Decimal::from(1_550));
         assert_eq!(fx.source.calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
     async fn rejects_stale_prices() {
         let fx = CachedFx::new(fake(1), Duration::zero(), Duration::zero());
-        assert!(fx.btc_price(Currency::Ngn).await.is_err());
+        assert!(fx.usd_rate(Currency::Ngn).await.is_err());
     }
 
     #[tokio::test]
@@ -232,19 +233,19 @@ mod tests {
             Arc::new(CachedFx::new(fake(10), Duration::seconds(60), Duration::seconds(60)));
         let backup: Arc<dyn FxProvider> = Arc::new(StaticFxProvider::new(HashMap::from([(
             Currency::Kes,
-            Decimal::from(10_700_000),
+            Decimal::from(129),
         )])));
         let fx = FallbackFx::new(vec![primary, backup]);
-        assert_eq!(fx.btc_price(Currency::Ngn).await.unwrap().source, "fake");
-        assert_eq!(fx.btc_price(Currency::Kes).await.unwrap().source, "static-config");
-        assert!(fx.btc_price(Currency::Gnf).await.is_err());
+        assert_eq!(fx.usd_rate(Currency::Ngn).await.unwrap().source, "fake");
+        assert_eq!(fx.usd_rate(Currency::Kes).await.unwrap().source, "static-config");
+        assert!(fx.usd_rate(Currency::Gnf).await.is_err());
     }
 
     #[test]
     fn derives_cfa_from_eur_peg() {
         let mut prices = HashMap::new();
-        insert_cfa_from_eur(&mut prices, Some(Decimal::from(70_000)));
-        assert_eq!(prices[&Currency::Xof], Decimal::new(45_916_990, 0));
+        insert_cfa_from_eur(&mut prices, Some(Decimal::new(92, 2)));
+        assert_eq!(prices[&Currency::Xof], Decimal::new(60_348_044, 5));
         assert_eq!(prices[&Currency::Xof], prices[&Currency::Xaf]);
     }
 }

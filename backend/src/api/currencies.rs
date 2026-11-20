@@ -2,6 +2,7 @@ use axum::{Json, extract::State};
 use serde::Serialize;
 
 use crate::{
+    adapters::stellar::StellarAsset,
     domain::{Currency, Rail},
     state::AppState,
 };
@@ -12,6 +13,10 @@ pub struct CurrencyInfo {
     name: &'static str,
     /// Decimal places of the minor unit; all API amounts are integers in minor units.
     exponent: u32,
+    /// Its token on Stellar.
+    stellar_asset: Option<StellarAsset>,
+    /// Whether senders can pay in it (a collection rail exists).
+    can_send: bool,
     /// Available payout rails; the first is the default when a quote names none.
     payout_rails: Vec<PayoutInfo>,
 }
@@ -36,6 +41,8 @@ pub async fn list(State(state): State<AppState>) -> Json<Vec<CurrencyInfo>> {
             code,
             name: code.name(),
             exponent: code.exponent(),
+            stellar_asset: state.ledger.asset(code),
+            can_send: state.collections.get(code).is_some(),
             payout_rails: {
                 let mut rails: Vec<_> = state
                     .payouts
@@ -49,7 +56,7 @@ pub async fn list(State(state): State<AppState>) -> Json<Vec<CurrencyInfo>> {
                         countries: a.countries(),
                     })
                     .collect();
-                rails.sort_by_key(|r| (r.rail == Rail::LightningAddress, r.provider.ends_with("-mock")));
+                rails.sort_by_key(|r| r.provider.ends_with("-mock"));
                 rails
             },
         })

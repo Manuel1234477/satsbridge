@@ -1,4 +1,5 @@
-# Render Blueprint for the backend (demo setup: mock payouts, real Lightning via LNbits).
+# Render Blueprint for the backend (demo setup: mock collections and payouts, settlement on
+# Stellar testnet). Run `cargo run --bin stellar_setup` locally first and paste its keys below.
 # Render > New > Blueprint > pick this repo, then fill in the variables marked sync: false.
 services:
   - type: web
@@ -13,21 +14,24 @@ services:
         value: "true"
       - key: BITNOB_COUNTRIES
         value: ""
-      # Demo only: mounts the mock payout simulator so test payments can be completed.
+      # Demo only: mounts the mock deposit/payout/refund simulators so test payments can be completed.
       - key: DEV_ROUTES
         value: "true"
-      # HMAC secret for /api/v1/webhooks/provider. Required: the service won't start without it.
+      # HMAC secret for /api/v1/webhooks/provider and /webhooks/collections. Required.
       - key: PROVIDER_WEBHOOK_SECRET
         generateValue: true
       # Bearer token for /api/v1/admin/*. Admin routes are disabled when empty.
       - key: ADMIN_API_KEY
         generateValue: true
-      - key: LNBITS_URL
+      - key: STELLAR_LEDGER
+        value: testnet
+      # From `cargo run --bin stellar_setup` (testnet keys only).
+      - key: STELLAR_ISSUER_SECRET
         sync: false
-      - key: LNBITS_INVOICE_KEY
+      - key: STELLAR_TREASURY_SECRET
         sync: false
-      - key: LNBITS_ADMIN_KEY
-        sync: false
+      - key: MOCK_COLLECTIONS
+        value: "true"
       # This service's public URL, e.g. https://satsbridge-api.onrender.com
       - key: PUBLIC_BASE_URL
         sync: false

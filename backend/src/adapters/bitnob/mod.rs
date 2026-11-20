@@ -3,10 +3,9 @@
 //!
 //! - [`BitnobClient`]: HMAC-signed requests (`x-auth-*` headers).
 //! - [`payout::BitnobPayoutAdapter`]: NGN bank transfers and mobile money payouts.
-//! - [`rates::BitnobRateSource`]: the NGN/KES/XOF/XAF rate Bitnob actually pays out at.
 //!
 //! Payouts debit the workspace's Bitnob balance in `from_asset` (`source: offchain`), so that
-//! balance must be pre-funded. Status arrives on `POST /api/v1/webhooks/bitnob`.
+//! balance must be pre-funded (in production, from the Stellar treasury's USDC). Status arrives on `POST /api/v1/webhooks/bitnob`.
 
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -19,7 +18,6 @@ use super::AdapterError;
 use crate::services::payments::{PayoutEvent, PayoutEventStatus};
 
 pub mod payout;
-pub mod rates;
 
 pub const DEFAULT_BASE_URL: &str = "https://api.bitnob.com";
 pub const SIGNATURE_HEADER: &str = "x-bitnob-signature";
@@ -136,17 +134,6 @@ struct PayoutData {
 struct PayoutList {
     #[serde(default)]
     items: Vec<BitnobPayout>,
-}
-
-impl BitnobPayout {
-    /// Sats Bitnob needs for this payout, from `sat_amount` or `btc_amount`.
-    pub fn sats(&self) -> Option<i64> {
-        if let Some(sats) = self.sat_amount.as_deref().and_then(|s| s.trim().parse::<i64>().ok()) {
-            return Some(sats);
-        }
-        let btc: rust_decimal::Decimal = self.btc_amount.as_deref()?.trim().parse().ok()?;
-        rust_decimal::prelude::ToPrimitive::to_i64(&(btc * rust_decimal::Decimal::from(100_000_000)).round())
-    }
 }
 
 /// hex(HMAC-SHA256("{client_id}:{timestamp}:{nonce}:{body}", client_secret)).
