@@ -111,14 +111,14 @@ export function HistoryList() {
               const status = STATUS[p.status];
               return (
                 <li key={p.id}>
-                  <Link href={`/payments/${p.id}`} className="list-row">
+                  <Link href={`/payments/${p.id}`} className="list-row history-row">
                     <span className="badge-stack" aria-hidden="true">
                       <span className="badge">{p.source_currency.slice(0, 2)}</span>
                       <span className="badge">{p.destination_currency.slice(0, 2)}</span>
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-semibold">{p.recipient_name ?? p.recipient_masked}</span>
-                      <span className="label">
+                      <span className="label block truncate">
                         {p.source_currency} → {p.destination_currency} · {new Date(p.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </span>

@@ -250,7 +250,7 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
 
           {!isDesktop && panel}
 
-          <nav aria-label="Shortcuts" className="flex justify-around">
+          <nav aria-label="Shortcuts" className="shortcuts flex justify-around">
             <button type="button" className="round-action" onClick={() => amountRef.current?.focus()}>
               <span className="disc">
                 <Send className="h-5 w-5" aria-hidden="true" />
