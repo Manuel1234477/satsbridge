@@ -1308,3 +1308,61 @@ details.card[open] > summary::after {
 details.card > summary::-webkit-details-marker {
   display: none;
 }
+
+/* ---- Mobile layout ---- */
+@media (max-width: 1023px) {
+  /* The tab bar already offers Send and Activity; keep only Help in the shortcuts row. */
+  .shortcuts > :not(:last-child) {
+    display: none;
+  }
+  .shortcuts {
+    justify-content: center;
+  }
+  .shortcuts .round-action {
+    flex-direction: row;
+    gap: 8px;
+    min-width: 0;
+  }
+  .shortcuts .round-action .disc {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* Continue bar: solid enough that content scrolling underneath does not ghost through. */
+  .dock {
+    bottom: calc(65px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-top: 1px solid var(--hairline);
+    padding-top: 12px;
+  }
+
+  .page {
+    gap: 16px;
+    padding-top: 16px;
+  }
+  .card {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Activity rows: drop the currency badges so the recipient and amount have room. */
+  .history-row {
+    padding: 14px 16px;
+    gap: 12px;
+  }
+  .history-row .badge-stack {
+    display: none;
+  }
+  .history-row .money {
+    font-size: 15px;
+  }
+  .page-title {
+    font-size: 28px;
+  }
+  .row-kv {
+    font-size: 14px;
+  }
+}
