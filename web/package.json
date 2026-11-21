@@ -13,7 +13,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.105.0",
     "lucide-react": "^1.62.0",
-    "next": "16.4.3",
+    "next": "^16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "^4.6.7"
@@ -30,7 +30,7 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4.2.1",
     "eslint": "^10.13.0",
-    "eslint-config-next": "^16.4.3",
+    "eslint-config-next": "^16.4.6",
     "jsdom": "^23.0.1",
     "msw": "^2.15.0",
     "react-hook-form": "^7.91.0",
