@@ -6,6 +6,8 @@ import { useQuery } from '@tanstack/react-query';
 import { getPayment } from '@/lib/api';
 import type { CurrencyInfo, Quote, Rail } from '@/lib/api/schemas';
 import { useCurrencies } from '@/hooks/useCurrencies';
+import { InlineAlert } from '@/components/ui/InlineAlert';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { SendPage, type SendPrefill } from './SendPage';
 import { ReviewPage } from './ReviewPage';
 
@@ -25,10 +27,20 @@ export function SendWizard({ fromPaymentId }: SendWizardProps) {
   const [selected, setSelected] = useState<{ quote: Quote; rail: Rail } | null>(null);
 
   if (currencies.isError) {
-    return <p role="alert" className="text-error-700 dark:text-error-300">{currencies.error.message}</p>;
+    return (
+      <div className="page">
+        <InlineAlert message={currencies.error.message} onRetry={() => void currencies.refetch()} retrying={currencies.isFetching} />
+      </div>
+    );
   }
   if (!currencies.data || (fromPaymentId && previous.isPending)) {
-    return <p className="text-muted">Loading…</p>;
+    return (
+      <div className="page flex flex-col gap-5" role="status" aria-label="Loading">
+        <Skeleton height={220} />
+        <Skeleton height={160} />
+        <Skeleton height={56} />
+      </div>
+    );
   }
 
   const list: CurrencyInfo[] = currencies.data;

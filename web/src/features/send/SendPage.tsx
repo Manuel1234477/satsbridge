@@ -5,7 +5,8 @@ import { ApiError } from '@/lib/api/errors';
 import { isRateStale } from '@/lib/rate-freshness';
 import { useNow } from '@/hooks/useNow';
 import Link from 'next/link';
-import { ArrowDownUp, CircleHelp, History, Send } from 'lucide-react';
+import { ArrowDownUp, CircleHelp, History, Landmark, Send } from 'lucide-react';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { LiveRatePanel } from '@/components/LiveRatePanel';
 import { InlineAlert } from '@/components/ui/InlineAlert';
 import { RailSelector } from '@/components/ui/RailSelector';
@@ -40,11 +41,15 @@ const DEFAULT_SOURCE: Currency = 'NGN';
 const DEFAULT_DESTINATION: Currency = 'KES';
 
 export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
-  const [sourceCode, setSourceCode] = useState<Currency>(prefill?.sourceCurrency ?? DEFAULT_SOURCE);
+  const sendable = sendableCurrencies(currencies);
+  const initialSource: Currency =
+    prefill?.sourceCurrency ??
+    (sendable.some((c) => c.code === DEFAULT_SOURCE) ? DEFAULT_SOURCE : (sendable[0]?.code ?? DEFAULT_SOURCE));
+  const [sourceCode, setSourceCode] = useState<Currency>(initialSource);
   const [destinationCode, setDestinationCode] = useState<Currency>(prefill?.destinationCurrency ?? DEFAULT_DESTINATION);
   const [side, setSide] = useState<'source' | 'destination'>('source');
   const [sourceText, setSourceText] = useState(() => {
-    const exponent = currencies.find((c) => c.code === (prefill?.sourceCurrency ?? DEFAULT_SOURCE))?.exponent ?? 0;
+    const exponent = currencies.find((c) => c.code === initialSource)?.exponent ?? 0;
     return prefill ? toInputText(prefill.sourceMinor, exponent) : '';
   });
   const [destinationText, setDestinationText] = useState('');
@@ -157,6 +162,24 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
       compact={!isDesktop}
     />
   );
+
+  if (sendable.length === 0) {
+    return (
+      <div className="page">
+        <h1 className="sr-only">Send money</h1>
+        <EmptyState
+          icon={<Landmark className="h-6 w-6" />}
+          title="Sending isn't available yet"
+          body="We're connecting payment partners for bank transfer and mobile money. Check back soon."
+          action={
+            <Link href="/history" className="btn btn-quiet">
+              View activity
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -272,7 +295,7 @@ export function SendPage({ currencies, prefill, onContinue }: SendPageProps) {
         open={sheet === 'source'}
         onClose={() => setSheet(null)}
         title="Send currency"
-        currencies={sendableCurrencies(currencies)}
+        currencies={sendable}
         selected={sourceCode}
         onSelect={(code) => {
           setSourceCode(code as Currency);
