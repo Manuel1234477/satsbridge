@@ -8,6 +8,7 @@ import { formatWithCode } from '@/lib/money';
 import { useCurrencies } from '@/hooks/useCurrencies';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { InlineAlert } from '@/components/ui/InlineAlert';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { History } from 'lucide-react';
 
@@ -58,7 +59,8 @@ export function HistoryList() {
 
   if (transactions.isPending || currencies.isPending) {
     return (
-      <div className="page medium" aria-busy="true" aria-label="Loading activity">
+      <div className="page medium" aria-busy="true" aria-label="Loading activity" role="status">
+        <h1 className="page-title">Activity</h1>
         <Skeleton height={76} />
         <Skeleton height={76} />
         <Skeleton height={76} />
@@ -69,12 +71,8 @@ export function HistoryList() {
     const message = (transactions.error ?? currencies.error)?.message ?? 'Something went wrong.';
     return (
       <div className="page medium">
-        <p role="alert" className="notice notice-failed">
-          {message}
-        </p>
-        <button type="button" onClick={() => transactions.refetch()} className="btn btn-quiet btn-block">
-          Try again
-        </button>
+        <h1 className="page-title">Activity</h1>
+        <InlineAlert message={message} onRetry={() => void transactions.refetch()} retrying={transactions.isFetching} />
       </div>
     );
   }
@@ -101,10 +99,13 @@ export function HistoryList() {
   const groups = groupByDay(list);
   return (
     <div className="page medium">
-      <h1 className="page-title">Activity</h1>
+      <div>
+        <h1 className="page-title">Activity</h1>
+        <p className="label mt-1">{list.length} recent {list.length === 1 ? 'payment' : 'payments'}</p>
+      </div>
       {groups.map((group) => (
         <section key={group.label} aria-label={group.label} className="flex flex-col gap-2">
-          <h2 className="label">{group.label}</h2>
+          <h2 className="group-label">{group.label}</h2>
           <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {group.items.map((p) => {
               const status = STATUS[p.status];

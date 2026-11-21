@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, ExternalLink, Printer } from 'lucide-react';
 import { StatusPill } from '@/components/ui/StatusPill';
+import { InlineAlert } from '@/components/ui/InlineAlert';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useCountdown } from '@/hooks/useCountdown';
 import { useCurrencies } from '@/hooks/useCurrencies';
 import { usePaymentDetails } from '@/hooks/usePayment';
@@ -33,15 +35,11 @@ export function PaymentView({ id }: { id: string }) {
   const error = query.error ?? currencies.error;
 
   if (error) {
-    return (
-      <p role="alert" className="notice notice-failed">
-        {error.message}
-      </p>
-    );
+    return <InlineAlert message={error.message} onRetry={() => void query.refetch()} retrying={query.isFetching} />;
   }
   const payment = query.data;
   const list = currencies.data;
-  if (!payment || !list) return <p className="label">Loading payment…</p>;
+  if (!payment || !list) return <PaymentSkeleton label="Loading payment" />;
   return <PaymentBody payment={payment} currencies={list} />;
 }
 
@@ -66,13 +64,9 @@ function PaymentBody({ payment, currencies }: { payment: PaymentDetails; currenc
       return <DepositView payment={payment} currencies={currencies} />;
     }
     if (invoice.isError) {
-      return (
-        <p role="alert" className="notice notice-failed">
-          {invoice.error.message}
-        </p>
-      );
+      return <InlineAlert message={invoice.error.message} onRetry={() => invoice.mutate()} retrying={invoice.isPending} />;
     }
-    return <p className="label">Preparing your payment details…</p>;
+    return <PaymentSkeleton label="Preparing your payment details" />;
   }
 
   return (
@@ -84,6 +78,16 @@ function PaymentBody({ payment, currencies }: { payment: PaymentDetails; currenc
       {payment.status === 'COMPLETED' && <Receipt payment={payment} currencies={currencies} />}
       {payment.stellar_transactions.length > 0 && <StellarTrail payment={payment} currencies={currencies} />}
       <Details payment={payment} />
+    </div>
+  );
+}
+
+function PaymentSkeleton({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col gap-5" role="status" aria-label={label}>
+      <Skeleton height={120} />
+      <Skeleton height={220} />
+      <Skeleton height={64} />
     </div>
   );
 }
@@ -130,7 +134,7 @@ function DepositView({ payment, currencies }: { payment: PaymentDetails; currenc
     <div className="flex flex-col gap-5">
       <div className="flex flex-col items-center gap-2 text-center">
         <p className="label">{mobile ? 'Pay exactly' : 'Transfer exactly'}</p>
-        <p className="money text-[44px] font-semibold leading-none">
+        <p className="money hero-amount">
           {formatMinor(deposit.expected_amount, exponent)}
           <span className="ml-2 text-lg text-[var(--text-2)]">{deposit.currency}</span>
         </p>
@@ -485,7 +489,7 @@ function Receipt({ payment, currencies }: { payment: PaymentDetails; currencies:
     staleTime: 60 * 60 * 1000,
   });
   return (
-    <section aria-labelledby="receipt" className="card flex flex-col gap-4">
+    <section aria-labelledby="receipt" className="card receipt flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
         <h2 id="receipt" className="text-lg font-semibold">
           Receipt
@@ -495,7 +499,7 @@ function Receipt({ payment, currencies }: { payment: PaymentDetails; currencies:
           Download receipt
         </button>
       </div>
-      <p className="money text-[40px] font-semibold leading-none">
+      <p className="money hero-amount">
         {formatMinor(payment.expected_payout, expOf(currencies, payment.destination_currency))}
         <span className="ml-2 text-lg text-[var(--text-2)]">{payment.destination_currency}</span>
       </p>
