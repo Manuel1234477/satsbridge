@@ -1193,3 +1193,118 @@ html {
     transform: none;
   }
 }
+
+/* ---- Review, payment and activity polish ---- */
+.step-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+.group-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  padding: 4px 2px 0;
+}
+.hero-amount {
+  font-size: clamp(38px, 9vw, 52px);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.hero-card {
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--hairline));
+}
+.hero-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 120px;
+  background: radial-gradient(40rem 8rem at 50% -2rem, var(--accent-soft), transparent 70%);
+  pointer-events: none;
+}
+.hero-card > * {
+  position: relative;
+}
+.receipt {
+  border-style: solid;
+  border-top: 3px solid var(--accent);
+}
+
+.row-kv dd {
+  overflow-wrap: anywhere;
+}
+
+/* Stepper: connect the dots with a line that fills as steps complete. */
+.stepper {
+  gap: 0;
+}
+.step {
+  position: relative;
+  padding-bottom: 22px;
+}
+.step:last-child {
+  padding-bottom: 0;
+}
+.step::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 30px;
+  bottom: 0;
+  width: 2px;
+  background: var(--hairline);
+}
+.step:last-child::before {
+  display: none;
+}
+.step-done::before {
+  background: var(--accent);
+}
+
+/* Notices: stronger left accent so the outcome reads at a glance. */
+.notice {
+  border-left-width: 4px;
+}
+.notice-pending {
+  border-left-color: var(--pending);
+}
+.notice-success {
+  border-left-color: var(--accent);
+}
+.notice-failed {
+  border-left-color: var(--failed);
+}
+.notice-refunded {
+  border-left-color: var(--refunded);
+}
+.success-check {
+  box-shadow: 0 0 0 10px var(--accent-soft), 0 12px 32px -8px var(--accent);
+  margin-bottom: 8px;
+}
+
+details.card > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+details.card > summary::after {
+  content: "+";
+  color: var(--text-2);
+  font-size: 20px;
+  line-height: 1;
+}
+details.card[open] > summary::after {
+  content: "−";
+}
+details.card > summary::-webkit-details-marker {
+  display: none;
+}

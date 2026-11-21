@@ -8,6 +8,7 @@ import type { ApiError } from '@/lib/api/errors';
 import type { CurrencyInfo, Quote, Rail } from '@/lib/api/schemas';
 import { formatMinor, formatWithCode } from '@/lib/money';
 import { RAIL_LABELS } from '@/lib/rails';
+import { InlineAlert } from '@/components/ui/InlineAlert';
 import { RailSelector } from '@/components/ui/RailSelector';
 import { useCountdown } from '@/hooks/useCountdown';
 import { NgBankRecipient } from '@/features/recipient/NgBankRecipient';
@@ -56,7 +57,10 @@ export function ReviewPage({ quote, rail, currencies, onBack, onPaid }: ReviewPa
         <button type="button" onClick={onBack} className="btn btn-ghost" aria-label="Back to amounts">
           <ChevronLeft className="h-5 w-5" aria-hidden="true" />
         </button>
-        <h1 className="page-title">{draft ? 'Review and pay' : 'Who is receiving this?'}</h1>
+        <div>
+          <p className="step-label">Step {draft ? 3 : 2} of 3</p>
+          <h1 className="page-title">{draft ? 'Review and pay' : 'Who is receiving this?'}</h1>
+        </div>
       </div>
 
       {!draft && (
@@ -86,11 +90,11 @@ export function ReviewPage({ quote, rail, currencies, onBack, onPaid }: ReviewPa
 
       {draft && (
         <>
-          <section aria-labelledby="summary" className="card flex flex-col gap-4">
+          <section aria-labelledby="summary" className="card hero-card flex flex-col gap-4">
             <h2 id="summary" className="label">
               They receive{quote.payout_amount_guaranteed ? '' : ' (estimated)'}
             </h2>
-            <p className="money text-[44px] font-semibold leading-none">
+            <p className="money hero-amount">
               {formatMinor(quote.destination_amount, destinationExponent)}
               <span className="ml-2 text-lg text-[var(--text-2)]">{quote.destination_currency}</span>
             </p>
@@ -125,14 +129,10 @@ export function ReviewPage({ quote, rail, currencies, onBack, onPaid }: ReviewPa
           </section>
 
           {isExpired && (
-            <p role="alert" className="notice notice-pending">
-              This rate has expired, so we cannot take payment on it. Go back to get the latest rate.
-            </p>
+            <InlineAlert message="This rate has expired, so we cannot take payment on it. Go back to get the latest rate." />
           )}
           {submitError && (
-            <p role="alert" className="notice notice-failed">
-              {expiredBeforeSubmit ? 'This rate has expired. Go back to get the latest rate.' : submitError.message}
-            </p>
+            <InlineAlert message={expiredBeforeSubmit ? 'This rate has expired. Go back to get the latest rate.' : submitError.message} />
           )}
 
           <div className="dock">
